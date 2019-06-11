@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<root>
+  <signature name="pxbank reports group"/>
+  <report name="CHFmExp" comment="Контрагенты с просроченной анкетой ФМ." language="JScript">
+    <classes>
+      <class name="bos32"/>
+    </classes>
+    <body>var dlg, db, Grd;
+
+db = HostApp.GeneralDataBase;
+
+dlg = HostApp.NewDialog();
+
+p = new Object(); 
+
+if (HostApp.StoredValue("DtBegin").vType == 0) HostApp.StoredValue("DtBegin").Value = BANKDAY.Value;
+if (HostApp.StoredValue("DtEnd").vType == 0) HostApp.StoredValue("DtEnd").Value = BANKDAY.Value;
+
+dlg.NewField("DtBegin", "Период с: ", HostApp.StoredValue("DtBegin").Value);
+dlg.NewField("DtEnd", "по: ", HostApp.StoredValue("DtEnd").Value);
+
+if (dlg.ShowModal()){
+
+DtBegin = new Date (dlg.DtBegin);
+DtEnd   = new Date (dlg.DtEnd);
+
+if (DtBegin.valueOf() &lt;= DtEnd.valueOf()) {
+
+// Сохраняем введённые параметры...
+
+HostApp.StoredValue("DtBegin").Value = dlg.DtBegin;
+HostApp.StoredValue("DtEnd").Value = dlg.DtEnd;
+
+p.DtBegin = ConvertDateToSqlString(DtBegin); 
+p.DtEnd = ConvertDateToSqlString(DtEnd);
+
+main(p);
+
+} else {
+HostApp.MsgBoxExt(1, "Дата начала периода должна быть меньше или равна дате конца" )}};
+
+function main(p) {
+
+SQLCmd = "select c.idcustomer, pp.workplace, cc.contract_number, \r\n" +
+"pp.surname, pp.name, pp.midname, \r\n" +
+"trim(NVL(pp.doc_seria,'') || ' ' || NVL(pp.doc_number,'')) as doc, \r\n" +
+"pp.doc_from, pp.doc_dtget, pp.birthday, \r\n" +
+"cp.date_open, c.last_ident, cont.phone, cont.email \r\n" +
+"FROM customer c, cardparams cp, \r\n" +
+"OUTER cardcontracts cc, \r\n" +
+"OUTER priv_person pp, \r\n" +
+"OUTER contact cont \r\n" +
+"WHERE c.idcustomer = cp.idcustomer \r\n" +
+"AND c.idcustomer = pp.idcustomer \r\n" +
+"AND c.idcustomer = cont.idcustomer \r\n" +
+"AND cc.idcustomer = cp.idcustomer \r\n" +
+"AND cc.idcontract = cp.idcontract \r\n" +
+"AND cont.main = 'Y' \r\n" +
+"AND c.last_ident is not null \r\n" +
+"AND c.last_ident + 3 UNITS year BETWEEN " + p.DtBegin + " AND " + p.DtEnd;
+
+Grd = HostApp.CreateGridForm(SQLCmd, true);
+Grd.title = "Контрагенты с просроченной анкетой ФМ.";
+Grd.Grid.DataSet.FieldByName("idcustomer").Caption = "BASEID";
+Grd.Grid.DataSet.FieldByName("workplace").Caption = "Место работы";
+Grd.Grid.DataSet.FieldByName("contract_number").Caption = "№ Договора";
+Grd.Grid.DataSet.FieldByName("surname").Caption = "фамилия";
+Grd.Grid.DataSet.FieldByName("name").Caption = "Имя";
+Grd.Grid.DataSet.FieldByName("midname").Caption = "Отчество";
+Grd.Grid.DataSet.FieldByName("doc").Caption = "Серия / номер паспорта";
+Grd.Grid.DataSet.FieldByName("doc_from").Caption = "Кем выдан паспорт";
+Grd.Grid.DataSet.FieldByName("doc_dtget").Caption = "Когда выдпн паспорт";
+Grd.Grid.DataSet.FieldByName("birthday").Caption = "Дата рождения";
+Grd.Grid.DataSet.FieldByName("date_open").Caption = "Дата откр. счета";
+Grd.Grid.DataSet.FieldByName("last_ident").Caption = "Дата посл. идент.";
+Grd.Grid.DataSet.FieldByName("phone").Caption = "Телефон (моб)";
+Grd.Grid.DataSet.FieldByName("email").Caption = "e-mail";
+Grd.ShowModal();
+Grd.Grid.DataSet.Close();
+
+};
+
+function ConvertDateToSqlString(dt)
+{
+ return "MDY (" + (dt.getMonth()+1)  + ", " + dt.getDate()  + ", " + dt.getFullYear()  + ")";
+};
+
+
+</body>
+    <groups/>
+  </report>
+</root>

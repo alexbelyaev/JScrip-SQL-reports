@@ -1,0 +1,310 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<root>
+  <signature name="pxbank reports group"/>
+  <report name="move_agr_acc" comment="Сворачивание остатков по счетам просроченной задолженности  111, 112" language="JScript">
+    <classes>
+      <class name="px_pay32"/>
+    </classes>
+    <body>//
+//   Сворачивание остатков по счетам просроченной задолженности  111, 112
+//
+
+// ------- Local defines --------
+var SQLCmd = ""; SQLErr = "";
+var Dlg = HostApp.NewDialog();
+var AgCurr = "";
+var vTmpagreem = true;
+
+
+// ------- Global Defines -------
+
+db         = HostApp.GeneralDataBase;
+
+var vODBDate = db.CreateCursor("execute procedure getworkodb_day()").Fields(0).AsString;
+
+DEBUG  = false;
+
+main ();
+
+function main ()
+{
+
+db.ExecSQL("DROP TABLE tmp_agreem");
+db.ExecSQL("DROP TABLE tmp_log");
+
+SQLCmd = "create temp table tmp_log( \r\n" +
+   "_color smallint,                     \r\n" +
+   "idagreem integer, -- ИД договора     \r\n" +
+   "loanid varchar(16), -- ИД договора     \r\n" +
+   "currency smallint, -- валюта 101го счета    \r\n" +
+   "acc_110 VARCHAR(17), -- номер счета     \r\n" +
+   "amount_110 MONEY(20, 2), --остаток 110   \r\n" +
+   "message varchar(100) --сообщение   \r\n" +
+") \r\n";
+
+RunSQL(SQLCmd,!DEBUG);
+
+SQLCmd = "create temp table tmp_agreem( \r\n" +
+   "_color smallint,                     \r\n" +
+   "idagreem integer, -- ИД договора     \r\n" +
+   "loanid varchar(16), -- loanid     \r\n" +
+   "currency smallint, -- валюта 101го счета    \r\n" +
+   "idacc_110 integer, -- 110 id             \r\n" +
+   "acc_110 VARCHAR(17), -- 110 номер            \r\n" +
+   "amount_110 MONEY(20, 2), --остаток 110   \r\n" +
+   "idacc_111 integer, -- 111             \r\n" +
+   "acc_111 VARCHAR(17), -- 111 номер            \r\n" +
+   "amount_111 MONEY(20, 2), --остаток 111   \r\n" +
+   "idacc_112 integer, -- 112               \r\n" +
+   "acc_112 VARCHAR(17), -- 112 номер            \r\n" +
+   "amount_112 MONEY(20, 2) --остаток 112   \r\n" +
+") \r\n";
+
+RunSQL(SQLCmd,!DEBUG);
+
+//Выберем договора по которым будем делать перенос и покажем их пользоватлю.
+
+SQLCmd = "insert into tmp_agreem ( idagreem, loanid, currency, idacc_110, acc_110, amount_110, idacc_111, acc_111, amount_111, idacc_112, acc_112, amount_112) select  asv.idagreement, asv.loanid,                \r\n" +
+"(select a.currency from account a, accservice acs where a.idacc = acs.idacc and acs.acctype = '101' and acs.idagreement = asv.idagreement) as currency, \r\n" +
+"asv.overduelacc,                                                                                                                     \r\n" +
+"(select acc from account where idacc = asv.overduelacc),                                                                                                                       \r\n" +
+"(select (am.amount - am.damount + am.camount) as amount from accmoney am, account a where a.idacc = asv.overduelacc and am.idacc = asv.overduelacc and am.currency = a.currency),                \r\n" +
+"asv.overduemacc,                                                                                                                       \r\n" +
+"(select acc from account where idacc = asv.overduemacc),                                                                                                                       \r\n" +
+"(select (am.amount - am.damount + am.camount) as amount from accmoney am, account a where a.idacc = asv.overduemacc and am.idacc = asv.overduemacc and am.currency = a.currency),                \r\n" +
+"asv.questionacc,                                                                                                                                        \r\n" +
+"(select acc from account where idacc = asv.questionacc),                                                                                                                       \r\n" +
+"(select (am.amount - am.damount + am.camount) as amount from accmoney am, account a where a.idacc = asv.questionacc and am.idacc = asv.questionacc and am.currency = a.currency)                 \r\n" +
+"from accountservice asv                                                                                              \r\n" +
+"where Get_ProdPartAgreem(asv.idagreement) in (1,3)                                                                                              \r\n" +
+"and ((asv.overduemacc is not null) or (asv.questionacc is not null))                                                                                    \r\n" +
+"and (exists (select * from accmoney am, account a where a.idacc = asv.overduemacc and am.idacc = asv.overduemacc and am.currency = a.currency and (am.amount - am.damount + am.camount) &lt; 0)   \r\n" +
+"     OR                                                                                                                                                             \r\n" +
+"     exists (select * from accmoney am, account a where a.idacc = asv.questionacc and am.idacc = asv.questionacc and am.currency = a.currency and (am.amount - am.damount + am.camount) &lt; 0))   \r\n";
+
+RunSQL(SQLCmd,!DEBUG);
+
+//Подкрасим если счета по договору в accservice отличаются, при переносе остатков эти договора игнорируем.
+
+SQLCmd = "update tmp_agreem                                                                                 \r\n" +
+"set _color = '3'                                                                                              \r\n" +
+"where (idacc_111 &lt;&gt; (select min(idacc) from accservice where acctype = '111' and idagreement = tmp_agreem.idagreem) AND idacc_111 is not null)  \r\n" +
+"or (idacc_112 &lt;&gt; (select min(idacc) from accservice where acctype = '112' and idagreement = tmp_agreem.idagreem) AND idacc_112 is not null)     \r\n" +
+"or (idacc_110 &lt;&gt; (select min(idacc) from accservice where acctype = '110' and idagreement = tmp_agreem.idagreem) AND idacc_110 is not null)     \r\n";
+
+RunSQL(SQLCmd,!DEBUG);
+
+if (db.CreateCursor("select count(*) from tmp_agreem").Fields(0).AsString &gt; 0 ) { vTmpagreem = true} else {vTmpagreem = false};
+
+Grd00 = HostApp.CreateGridForm("SELECT _color, loanid, currency, acc_110, amount_110, acc_111, amount_111, acc_112, amount_112 FROM tmp_agreem", false);
+Grd00.title = "Список договоров попадающих под условие переноса остатков";
+Grd00.Grid.DataSet.FieldByName('loanid').Caption = 'Договор:';
+Grd00.Grid.DataSet.FieldByName('currency').Caption = 'валюта';
+Grd00.Grid.DataSet.FieldByName('acc_110').Caption = 'Счет 110';
+Grd00.Grid.DataSet.FieldByName('amount_110').Caption = 'Сумма';
+Grd00.Grid.DataSet.FieldByName('acc_111').Caption = 'Счет 111';
+Grd00.Grid.DataSet.FieldByName('amount_111').Caption = 'Сумма';
+Grd00.Grid.DataSet.FieldByName('acc_112').Caption = 'Счет 112';
+Grd00.Grid.DataSet.FieldByName('amount_112').Caption = 'Сумма';
+
+if (vTmpagreem)
+{
+Grd00.ShowModal();
+
+if(MsgBoxExt(3,'Выполнить перенос остатков счетов 111, 112 на 110?',3)==6)
+{
+
+accmove();
+
+MsgBox('Работа отчета завершена!');
+
+}
+else
+{
+MsgBox('Работа отчета завершена, перенос не выполнен.');
+};
+
+} else {MsgBox('Нет договоров отвечающих условию.');}
+
+db.ExecSQL("DROP TABLE tmp_agreem");
+
+
+
+};
+
+function accmove()
+{
+
+Grd01 = db.CreateScrollCursor("SELECT * FROM tmp_agreem");
+
+while ( !Grd01.EOF )
+{
+var vColor       = Grd01.FieldByName("_color").value;
+var vIdagreem    = Grd01.FieldByName("idagreem").value;
+var vLoanid      = Grd01.FieldByName("loanid").value;
+var vCurrency    = Grd01.FieldByName("currency").value;
+var vAcc110      = Grd01.FieldByName("idacc_110").value;
+var vAcc110n     = Grd01.FieldByName("acc_110").value;
+var vAmount110   = Grd01.FieldByName("amount_110").value;
+var vAcc111      = Grd01.FieldByName("idacc_111").value;
+var vAcc111n     = Grd01.FieldByName("acc_111").value;
+var vAmount111   = Grd01.FieldByName("amount_111").value;
+var vAcc112      = Grd01.FieldByName("idacc_112").value;
+var vAcc112n     = Grd01.FieldByName("acc_112").value;
+var vAmount112   = Grd01.FieldByName("amount_112").value;
+var vNDog = db.CreateCursor("SELECT npd FROM accountservice where idagreement = " + vIdagreem).Fields(0).AsString;
+
+//Если 110го нет - переименовуем 111 или 112 и протоколируем
+
+if ((vAcc110 == null)&amp;( vColor != '3'))
+{
+
+if (vAmount111 &lt; vAmount112)
+{
+SQLCmd = "UPDATE tmp_agreem set idacc_110 =" + vAcc111 + " where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE tmp_agreem set acc_110 =" + vAcc111n + " where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE tmp_agreem set amount_110 =" + vAmount111 + " where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE tmp_agreem set idacc_111 = null where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE tmp_agreem set acc_111 = null where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE tmp_agreem set amount_111 = null where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE tmp_agreem set _color = '2' where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE accountservice set overduelacc = " + vAcc111 + " where idagreement = "+ vIdagreem +" and overduelacc is null; \r\n" +
+"UPDATE accountservice set overduemacc = null where idagreement = "+ vIdagreem +" and overduemacc = "+vAcc111+"; \r\n" +
+"INSERT into tmp_log (_color, idagreem, loanid, currency, acc_110, amount_110, message) VALUES ('2'," + vIdagreem + ","+vLoanid+","+ vCurrency +"," +vAcc111n+ "," + vAmount111 + ", 'Счет 111 изменен на 110') ";
+ vAcc110      = vAcc111 ;
+ vAcc110n     = vAcc111n;
+ vAcc111      = null;
+ vAcc111n     = null;
+ vAmount111   = null;
+} else
+{
+SQLCmd = "UPDATE tmp_agreem set idacc_110 =" + vAcc112 + " where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE tmp_agreem set acc_110 =" + vAcc112n + " where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE tmp_agreem set amount_110 =" + vAmount112 + " where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE tmp_agreem set idacc_112 = null where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE tmp_agreem set acc_112 = null where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE tmp_agreem set amount_112 = null where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE tmp_agreem set _color = '2' where idagreem = " + vIdagreem + "; \r\n" +
+"UPDATE accountservice set overduelacc = " + vAcc112 + " where idagreement = "+ vIdagreem +" and overduelacc is null; \r\n" +
+"UPDATE accountservice set questionacc = null where idagreement = "+ vIdagreem +" and questionacc = "+vAcc112+"; \r\n" +
+"INSERT into tmp_log (_color, idagreem, loanid, currency, acc_110, amount_110, message) VALUES ('2'," + vIdagreem + ","+vLoanid+","+ vCurrency +"," +vAcc112n+ "," + vAmount112 + ", 'Счет 112 изменен на 110') ";
+ vAcc110      = vAcc112 ;
+ vAcc110n     = vAcc112n;
+ vAcc112      = null;
+ vAcc112n     = null;
+ vAmount112   = null;
+};
+RunSQL(SQLCmd,!DEBUG);
+}
+
+//Создаем проводки
+
+if ((vAmount111 &lt; 0) &amp; ( vColor != '3'))
+{
+
+ try
+    {
+     SQLCmd = "execute procedure account_movemoney("+vAcc111+","+vAcc110+",'Перенос залишків рахунків, прострочених від 31 дня та більше на рахунок прострочених відсотків за договором №"+vNDog+" від "+vODBDate+"')";
+     RunSQL(SQLCmd,!DEBUG);
+
+     SQLCmd = "INSERT into tmp_log (idagreem, loanid, currency, acc_110, amount_110, message) VALUES ("+vIdagreem+","+vLoanid+","+vCurrency+","+vAcc110n+","+vAmount110+",'Выполнен перенос остатка по счету 111')";
+     RunSQL(SQLCmd,!DEBUG);
+    } catch (SQLErr) {
+      vCR = db.CreateCursor('EXECUTE PROCEDURE DecryptSQLError(-746, "")');
+      vEMsg = vCR.Fields(2).AsString.replace(/:/, '::');
+      vEText = vCR.Fields(3).AsString.replace(/%s/, vEMsg);
+      vCR.Close();
+      delete vCR;
+      SQLCmd = "INSERT into tmp_log (_color, idagreem, loanid, currency, acc_110, amount_110, message) VALUES ( '3',"+vIdagreem+","+vLoanid+","+vCurrency+","+vAcc110n+","+vAmount110+",'"+vEText+"')";
+      RunSQL(SQLCmd,false);
+    };
+
+vAmount110 = db.CreateCursor("select (am.amount - am.damount + am.camount) as amount from accmoney am, account a where a.idacc = "+ vAcc110 +" and am.idacc = a.idacc and am.currency = a.currency").Fields(0).AsString;
+
+
+
+}
+if ((vAmount112 &lt; 0) &amp; ( vColor != '3'))
+{
+try
+  {
+    SQLCmd = "execute procedure account_movemoney("+vAcc112+","+vAcc110+",'Перенос залишків рахунків, прострочених від 31 дня та більше на рахунок прострочених відсотків за договором №"+vNDog+" від "+vODBDate+"')";
+    RunSQL(SQLCmd,!DEBUG);
+
+    vAmount110 = db.CreateCursor("select (am.amount - am.damount + am.camount) as amount from accmoney am, account a where a.idacc = "+ vAcc110 +" and am.idacc = a.idacc and am.currency = a.currency").Fields(0).AsString;
+
+    SQLCmd = "INSERT into tmp_log (idagreem, loanid, currency, acc_110, amount_110, message) VALUES ("+vIdagreem+","+vLoanid+","+vCurrency+","+vAcc110n+","+vAmount110+",'Выполнен перенос остатка по счету 112')";
+    RunSQL(SQLCmd,!DEBUG);
+   } catch (SQLErr){
+      vCR = db.CreateCursor('EXECUTE PROCEDURE DecryptSQLError(-746, "")');
+      vEMsg = vCR.Fields(2).AsString.replace(/:/, '::');
+      vEText = vCR.Fields(3).AsString.replace(/%s/, vEMsg);
+      vCR.Close();
+      delete vCR;
+SQLCmd = "INSERT into tmp_log (_color, idagreem, loanid, currency, acc_110, amount_110, message) VALUES ('3',"+vIdagreem+","+vLoanid+","+vCurrency+","+vAcc110n+","+vAmount110+",'"+vEText+"')";
+      RunSQL(SQLCmd,false);
+   };
+
+
+}
+
+
+Grd01.Next();
+};
+
+if (db.CreateCursor("select count(*) from tmp_agreem where _color = '2'").Fields(0).AsString &gt; 0 ) { vTmpagreem = true} else {vTmpagreem = false};
+
+Grd01 = HostApp.CreateGridForm("SELECT _color, loanid, currency, acc_110, amount_110, acc_111, amount_111, acc_112, amount_112 FROM tmp_agreem where _color = '2'", false);
+Grd01.title = "Договора, для которых был изменен счет 110";
+Grd01.Grid.DataSet.FieldByName('loanid').Caption = 'Договор:';
+Grd01.Grid.DataSet.FieldByName('currency').Caption = 'валюта';
+Grd01.Grid.DataSet.FieldByName('acc_110').Caption = 'Счет 110';
+Grd01.Grid.DataSet.FieldByName('amount_110').Caption = 'Сумма';
+Grd01.Grid.DataSet.FieldByName('acc_111').Caption = 'Счет 111';
+Grd01.Grid.DataSet.FieldByName('amount_111').Caption = 'Сумма';
+Grd01.Grid.DataSet.FieldByName('acc_112').Caption = 'Счет 112';
+Grd01.Grid.DataSet.FieldByName('amount_112').Caption = 'Сумма';
+if (vTmpagreem) {Grd01.ShowModal()};
+
+Grd02 = HostApp.CreateGridForm("SELECT * FROM tmp_log", true);
+Grd02.title = "Протокол выполнения";
+Grd02.Grid.DataSet.FieldByName('idagreem').Visible = false;
+Grd02.Grid.DataSet.FieldByName('loanid').Caption = 'Договор';
+Grd02.Grid.DataSet.FieldByName('currency').Caption = 'Валюта';
+Grd02.Grid.DataSet.FieldByName('acc_110').Caption = 'Счет 110';
+Grd02.Grid.DataSet.FieldByName('amount_110').Caption = 'Сумма';
+Grd02.Grid.DataSet.FieldByName('message').Caption = 'Сообщение';
+Grd02.ShowModal();
+
+
+};
+
+function RunSQL(cSQLCmd, isBreak)
+{
+  var retvar = true;
+  var lIsBreak = false;
+
+  if (typeof(isBreak) != "boolean" || isBreak == null)
+  {
+  } else {
+    lIsBreak = isBreak;
+  }
+
+  cError = HostApp.GeneralDataBase.ExecSQL(cSQLCmd);
+  if ( cError.length &gt; 0 )
+  {
+    retvar = false;
+    if (lIsBreak)
+    {
+     HostApp.RaiseException(cError + "\r\n" + cSQLCmd);
+    } else {
+     MsgBox(cError + "\r\n" + cSQLCmd);
+    }
+  }
+  return retvar;
+}
+
+</body>
+    <groups/>
+  </report>
+</root>

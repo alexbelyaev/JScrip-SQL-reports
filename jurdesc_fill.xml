@@ -1,0 +1,369 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<root>
+  <signature name="pxbank reports group"/>
+  <report name="jurdesc_fill" comment="Прочие сведения: изменения по списку контрагентов." language="JScript">
+    <classes>
+      <class name="customers"/>
+    </classes>
+    <body>dlg = HostApp.NewDialog();
+db  = HostApp.GeneralDataBase;
+p = new Object();
+DEBUG = false;
+
+if (HostApp.StoredValue("DtReport").vType == 0)  HostApp.StoredValue("DtReport").Value = BANKDAY.Value;
+HostApp.StoredValue("ChkSaldo").Value = true;
+HostApp.StoredValue("Desc1").Value  = " ";
+HostApp.StoredValue("Desc1Val").Value  = 0;
+HostApp.StoredValue("ChkDesc1").Value = false;
+HostApp.StoredValue("Desc2").Value  = " ";
+HostApp.StoredValue("Desc2Val").Value  = 0;
+HostApp.StoredValue("ChkDesc2").Value = false;
+HostApp.StoredValue("Desc3").Value  = " ";
+HostApp.StoredValue("Desc3Val").Value  = 0;
+HostApp.StoredValue("ChkDesc3").Value = false;
+
+dlg.NewField ( "DtReport",     "Отчетная дата:",                 HostApp.StoredValue ("DtReport").Value );
+dlg.NewField ( "ChkSaldo",       "Есть движение / Нет движения за 3 мес.",            true );
+dlg.NewField ( "ChkDesc1",       "",                             false );
+dlg.NewField ( "Desc1",       "Оценка соответствия операций видам деятельности:",   " " );
+dlg.NewField ( "Desc1Val",       "Оценка:",                      0 );
+dlg.NewField ( "ChkDesc2",       "",                             false );
+dlg.NewField ( "Desc2", "Характеристика финансового состояния:",  " " );
+dlg.NewField ( "Desc2Val", "Оценка:",                            0 );
+dlg.NewField ( "ChkDesc3",       "",                             false );
+dlg.NewField ( "Desc3", "Оценка соотв. операций фин состоянию:",  " " );
+dlg.NewField ( "Desc3Val", "Оценка:",                            0 );
+
+
+db.ExecSQL ("DROP TABLE tmp_idcust");
+
+SQLCmd =
+ "CREATE TEMP TABLE tmp_idcust\r\n" +
+ "(\r\n" +
+ " idcustomer            INTEGER,\r\n" +
+ " cstmr_type            CHAR(1)\r\n" +
+ ") WITH NO LOG";
+
+ RunSQL(SQLCmd, true);
+ 
+ db.ExecSQL ("DROP TABLE tmp_log");
+ 
+ SQLCmd = "create temp table tmp_log( \r\n" +
+ "_color smallint,              \r\n" +
+ "idcustomer integer,      \r\n" +
+ "message varchar(255)      \r\n" +
+ ") WITH NO LOG \r\n";
+ 
+ RunSQL(SQLCmd, true);
+
+ SQLCmd = "INSERT INTO tmp_idcust (idcustomer, cstmr_type) VALUES (:idcustomer, :cstmr_type)";
+
+  if (Grid.Selected == 0)
+  {
+    switch (HostApp.MsgBoxExt(3, "Сформировать отчет только для выбранного контрагента ?", 1+256))
+    {
+      case 9:  Grid.DataSet.ForEachSQL(SQLCmd);   break;
+      case 6:  Grid.ForEachSQL(SQLCmd);           break;
+      case 2:
+    }
+  } else {
+    Grid.ForEachSQL(SQLCmd);
+  };
+
+if (dlg.ShowModal()){
+ 
+ p.DtReport = new Date (dlg.DtReport);
+ p.DtBegin = new Date (dlg.DtReport);
+ p.DtBegin.setMonth(p.DtBegin.getMonth()-3);
+ p.bnkday  = new Date (BANKDAY.value);
+ 
+ p.ChkSaldo = dlg.ChkSaldo;
+ p.ChkDesc1 = dlg.ChkDesc1;
+ vDesc1 = InfSyntaxCVT(dlg.Desc1);
+ p.Desc11 = vDesc1.substring(0,255);
+ p.Desc12 = vDesc1.substring(255,510);
+ p.Desc13 = vDesc1.substring(510,765);
+ p.Desc1Val = dlg.Desc1Val;
+ p.ChkDesc2 = dlg.ChkDesc2;
+ vDesc2 = InfSyntaxCVT(dlg.Desc2);
+ p.Desc21 = vDesc2.substring(0,255);
+ p.Desc22 = vDesc2.substring(255,510);
+ p.Desc23 = vDesc2.substring(510,765);
+ p.Desc2Val = dlg.Desc2Val;
+ p.ChkDesc3 = dlg.ChkDesc3;
+ vDesc3 = InfSyntaxCVT(dlg.Desc3);
+ p.Desc31 = vDesc3.substring(0,255);
+ p.Desc32 = vDesc3.substring(255,510);
+ p.Desc33 = vDesc3.substring(510,765);
+ p.Desc3Val = dlg.Desc3Val;
+
+ 
+SQLCmd ="select scoremin, scoremax from risk_type where idrisktype = 2";
+Cursor = db.CreateCursor(SQLCmd);
+vRmin = Cursor.FieldByName("scoremin").Value;
+vRmax = Cursor.FieldByName("scoremax").Value;
+ 
+ // Контроль параметров ...
+ if (  p.DtReport.valueOf() &lt;= p.bnkday.valueOf() )
+ {
+ if (!p.ChkDesc1 &amp;&amp; !p.ChkDesc2 &amp;&amp; !p.ChkDesc3) MsgBox('Параметры не выбраны'); else
+ if (p.ChkDesc1 &amp;&amp; alltrim(vDesc1) == "") MsgBox('Поле "Оценка соответствия" не заполнено'); else
+ if (p.ChkDesc2 &amp;&amp; alltrim(vDesc2) == "") MsgBox('Поле "Характеристика фин. сост." не заполнено'); else
+ if (p.ChkDesc3 &amp;&amp; alltrim(vDesc3) == "") MsgBox('Поле "Оценка соотв. фин. состоянию" не заполнено'); else
+ if (p.ChkDesc1 &amp;&amp; (p.Desc1Val &lt; vRmin || p.Desc1Val &gt; vRmax)) MsgBox('Поле оценка не соответствует диапазону значений в конфигураторе'); else
+ if (p.ChkDesc2 &amp;&amp; (p.Desc2Val &lt; vRmin || p.Desc2Val &gt; vRmax)) MsgBox('Поле оценка не соответствует диапазону значений в конфигураторе'); else
+ if (p.ChkDesc3 &amp;&amp; (p.Desc3Val &lt; vRmin || p.Desc3Val &gt; vRmax)) MsgBox('Поле оценка соотв. фин. состоянию не соответствует диапазону значений в конфигураторе'); else
+ {
+
+ //Прошли проверки
+// Сохраняем введённые параметры...
+ HostApp.StoredValue("DtReport").Value = dlg.DtReport;
+
+  if(db.ExecSQL("SET ROLE 'rlownedt'").length == 0){
+main(p);
+} else MsgBox('У пользователя нет полномочия: Модификация реестра контрагентов (rlownedt).');
+
+ };
+
+} else MsgBox('Отчетная дата превышает банковский день!');
+
+};
+
+function main (p)
+{
+
+vDtBegin = ConvertDateToSqlString(p.DtBegin);
+vDtEnd = ConvertDateToSqlString(p.DtReport);
+
+if(DEBUG) HostApp.CreateGridForm('SELECT * from tmp_idcust',true).Showmodal();
+
+ls = db.CreateCursor('SELECT * from tmp_idcust');
+while (!ls.EOF){
+
+vIdCust = ls.FieldByName("idcustomer").Value;
+
+//узнать юр.статусклиента
+
+SQLCmd = "SELECT cstmr_type from customer WHERE idcustomer ="+vIdCust;
+vCustType = db.CreateCursor(SQLCmd).Fields(0).Value;
+
+//ОЦЕНКА СООТВЕТСТВИЯ ОПЕРАЦИЙ
+if (p.ChkDesc1)
+{
+
+//Только для контрагентов с юр.статусом "Ю", "П", "ю"
+
+if (vCustType == 'Ю' || vCustType == 'П' || vCustType == 'ю'){
+
+//определить для него desctype
+
+switch(vCustType)
+{
+case 'Ю': vDescType = "214"; break;
+case 'П': vDescType = "414"; break;
+case 'ю': vDescType = "214"; break;
+};
+
+//проверить движение на его счетах за 3 мес
+
+SQLCmd =
+"select count(*)                                                                \r\n" +
+"from saldo                                                                     \r\n" +
+"where idacc in (select idacc from vaccount where idcustomer = "+vIdCust+")      \r\n" +
+"and (debit &gt; 0 OR credit &gt; 0)                                                  \r\n" +
+"and dtend between "+vDtBegin+" and "+vDtEnd+"                             \r\n";
+
+if (db.CreateCursor(SQLCmd).Fields(0).Value &gt; 0) saldo = true; else saldo = false;
+
+if (p.ChkSaldo) mess1 = 'нет'; else mess1 = 'есть';
+
+if ((saldo &amp;&amp; p.ChkSaldo) || (!saldo &amp;&amp; !p.ChkSaldo)){
+
+//проверить есть такой параметр на клиенте
+
+SQLCmd = "SELECT count(*) FROM jurhistory WHERE idcustomer = "+vIdCust+" AND SUBSTR(desctype, 2) = '14'";
+if (db.CreateCursor(SQLCmd).Fields(0).Value == 0){
+
+//Вставляем запись
+
+SQLCmd =
+"insert into jurhistory (idcustomer, desctype, desctext, desctext2, desctext3,score, descdate)              \r\n" +
+"values ('"+vIdCust+"','"+vDescType+"','"+p.Desc11+"','"+p.Desc12+"','"+p.Desc13+"','"+p.Desc1Val+"',"+vDtEnd+")          \r\n";
+RunSQL(SQLCmd, true);
+
+RunSQL("insert into tmp_log values ('0',"+vIdCust+",'Добавлена оценка соответствия. ')", true)
+
+} else {
+//Обновляем запись
+SQLCmd =
+"UPDATE jurhistory set desctext = '"+p.Desc11+"',desctext2 = '"+p.Desc12+"',desctext3 = '"+p.Desc13+"', \r\n" +
+"score = "+p.Desc1Val+", descdate = "+vDtEnd+"\r\n" +
+"WHERE idcustomer = "+vIdCust+" AND SUBSTR(desctype, 2) = '14'"; 
+RunSQL(SQLCmd, true);
+
+RunSQL("insert into tmp_log values ('1',"+vIdCust+",'Обновлена оценка соответствия')", true)
+
+};
+
+}else  RunSQL("insert into tmp_log values ('1',"+vIdCust+",'оценка соотв. видам деят. НЕ ОБНОВЛЕНА - " + mess1 + " движения за 3 мес.')", true);
+} else  RunSQL("insert into tmp_log values ('2',"+vIdCust+",'оценка соответствия - юр. статус не Ю, П, ю')", true);
+};
+
+//ХАРАКТЕРИСТИКА ФИН СОСТ
+if(p.ChkDesc2){
+
+//Только для контрагентов с юр.статусом ("Ф" - 115, "Ю", "ю" - 215, "Б", "в" - 315, "П" - 415)
+
+if (vCustType == 'Ф' || vCustType == 'Ю' || vCustType == 'ю' || vCustType == 'Б'|| vCustType == 'в'|| vCustType == 'П'){
+
+//определить для него desctype
+
+switch(vCustType)
+{
+
+case "Ф": vDescType = "115"; break;
+case "Ю": vDescType = "215"; break;
+case "ю": vDescType = "215"; break;
+case "Б": vDescType = "315"; break;
+case "в": vDescType = "315"; break;
+case "П": vDescType = "415"; break;
+
+}
+
+//проверить есть такой параметр на клиенте
+
+SQLCmd = "SELECT count(*) FROM jurhistory WHERE idcustomer = "+vIdCust+" AND SUBSTR(desctype, 2) = '15'";
+if (db.CreateCursor(SQLCmd).Fields(0).Value == 0){
+
+//Вставляем запись
+
+SQLCmd =
+"insert into jurhistory (idcustomer, desctype, desctext, desctext2, desctext3,score, descdate)            \r\n" +
+"values ('"+vIdCust+"','"+vDescType+"','"+p.Desc21+"','"+p.Desc22+"','"+p.Desc23+"','"+p.Desc2Val+"',"+vDtEnd+")          \r\n";
+RunSQL(SQLCmd, true);
+
+RunSQL("insert into tmp_log values ('0',"+vIdCust+",'Добавлена характеристика фин. сост. ')", true);
+
+} else {
+//Обновляем запись
+SQLCmd =
+"UPDATE jurhistory set desctext = '"+p.Desc21+"',desctext2 = '"+p.Desc22+"',desctext3 = '"+p.Desc23+"', \r\n" +
+"score = "+p.Desc2Val+", descdate = "+vDtEnd+"\r\n" +
+"WHERE idcustomer = "+vIdCust+" AND SUBSTR(desctype, 2) = '15'"; 
+RunSQL(SQLCmd, true);   
+
+RunSQL("insert into tmp_log values ('1',"+vIdCust+",'Обновлена характеристика фин. сост. ')", true);
+         
+};
+
+}else  RunSQL("insert into tmp_log values ('2',"+vIdCust+",'Фин. состояние - юр. статус не Ф,Ю,ю,Б,в,П')", true);
+};
+
+//Оцінка відповідності операцій клієнта наявній інформації щодо його фінансового стану
+
+if(p.ChkDesc3){
+
+//Только для контрагентов с юр.статусом ("Ф" - 116, "Ю", "ю" - 216, "Б", "в" - 316, "П" - 416)
+
+if (vCustType == 'Ф' || vCustType == 'Ю' || vCustType == 'ю' || vCustType == 'Б'|| vCustType == 'в'|| vCustType == 'П'){
+
+//определить для него desctype
+
+switch(vCustType)
+{
+
+case "Ф": vDescType = "116"; break;
+case "Ю": vDescType = "216"; break;
+case "ю": vDescType = "216"; break;
+case "Б": vDescType = "316"; break;
+case "в": vDescType = "316"; break;
+case "П": vDescType = "416"; break;
+
+}
+
+//проверить есть такой параметр на клиенте
+
+SQLCmd = "SELECT count(*) FROM jurhistory WHERE idcustomer = "+vIdCust+" AND SUBSTR(desctype, 2) = '16'";
+if (db.CreateCursor(SQLCmd).Fields(0).Value == 0){
+
+//Вставляем запись
+
+SQLCmd =
+"insert into jurhistory (idcustomer, desctype, desctext, desctext2, desctext3,score, descdate)            \r\n" +
+"values ('"+vIdCust+"','"+vDescType+"','"+p.Desc31+"','"+p.Desc32+"','"+p.Desc33+"','"+p.Desc3Val+"',"+vDtEnd+")          \r\n";
+RunSQL(SQLCmd, true);
+
+RunSQL("insert into tmp_log values ('0',"+vIdCust+",'Добавлена оценка соотв.операций фин. состоянию. ')", true);
+
+} else {
+//Обновляем запись
+SQLCmd =
+"UPDATE jurhistory set desctext = '"+p.Desc31+"',desctext2 = '"+p.Desc32+"',desctext3 = '"+p.Desc33+"', \r\n" +
+"score = "+p.Desc3Val+", descdate = "+vDtEnd+"\r\n" +
+"WHERE idcustomer = "+vIdCust+" AND SUBSTR(desctype, 2) = '16'"; 
+RunSQL(SQLCmd, true);   
+
+RunSQL("insert into tmp_log values ('1',"+vIdCust+",'Обновлена оценка соотв.операций фин. состоянию. ')", true);
+         
+};
+
+}else  RunSQL("insert into tmp_log values ('2',"+vIdCust+",'Оценка соотв. операций фин. состоянию - юр. статус не Ф,Ю,ю,Б,в,П')", true);
+};
+
+
+ls.Next();
+
+};
+
+delete ls;
+
+if(DEBUG) HostApp.CreateGridForm('Select * from tmp_log', false).ShowModal(); else
+HostApp.CreateGridForm('Select * from tmp_log where _color in (0,1)', false).ShowModal();
+
+//vAll = db.CreateCursor("select count(*) from tmp_log where _color").Fields(0).Value;
+
+};
+
+function RunSQL(cSQLCmd, isBreak)
+{
+  var retvar = true;
+  var lIsBreak = false;
+
+  if (typeof(isBreak) != "boolean" || isBreak == null)
+  {
+  } else {
+    lIsBreak = isBreak;
+  }
+
+  cError = HostApp.GeneralDataBase.ExecSQL(cSQLCmd);
+  if ( cError.length &gt; 0 )
+  {
+    retvar = false;
+    if (lIsBreak)
+    {
+     HostApp.RaiseException(cError + "\r\nSQL Replica:\r\n" + cSQLCmd);
+    } else {
+     MsgBox(cError + "\r\n" + cSQLCmd);
+    }
+  }
+  return retvar;
+};
+
+function ConvertDateToSqlString (dt)
+{
+ return "MDY (" + (dt.getMonth()+1)  + ", " + dt.getDate()  + ", " + dt.getFullYear()  + ")";
+};
+
+function InfSyntaxCVT(sText)
+// Функция предназначена для подготовки строковых данных, которые могут содержать символы " или ' для
+// корректной интерпретации их Informix-ом
+// Предполагается, что команда заключает параметр в одинарные скобки - '.
+{
+ return sText.replace(/:/g, "::").replace(/\'/g, "''");
+};
+
+function alltrim(s) { return s.replace(/^\x20*/g, "").replace(/\x20*$/g, ""); }
+</body>
+    <groups/>
+  </report>
+</root>

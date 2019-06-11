@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<root>
+  <signature name="pxbank reports group"/>
+  <report name="n_fgv_dubeli" comment="N__Проверка ФГВ (ARM_RV) на дубли" language="JScript">
+    <classes>
+      <class name="bos32"/>
+    </classes>
+    <body>
+
+GDB=HostApp.GeneralDataBase;
+Dlg=HostApp.NewDialog();
+
+var tip_otc="";
+var Delim='|';
+
+
+function myExecSQL(aSql)
+{
+  err = GDB.ExecSQL(aSql);
+  if  (err != '')
+  {
+     MsgBox(err);
+     MsgBox(aSql);
+  }
+};
+
+
+
+//tip_otc+='1 - При одинаковых ИНН разные ФИО или документы';
+//tip_otc+=Delim + '2 - При одинаковых ФИО разные ИНН или документы';
+//tip_otc+=Delim + '3 - При одинаковых документах разные ИНН или ФИО';
+
+//Dlg.NewFieldCB('report',"Выберите тип отчета",tip_otc);
+
+
+
+
+ if (Dlg.ShowModal())
+   {
+     //tip_report = Dlg.report;
+
+     //MsgBox(tip_report);
+
+     GDB.ExecSQL("drop table tmp_dubeli");
+     SQL=" select  distinct   identcode, upper (family) as family, upper(name) as name, upper(soname) as soname, docsernum, docdate   \r\n"+
+         " from    arm_rv                                                                                                             \r\n"+
+         " into temp tmp_dubeli with no log                                                                                               ";
+     myExecSQL(SQL);
+
+     var Excel = new ActiveXObject("Excel.Application");
+     // Excel.Visible = false;
+     Excel.Visible = true;
+
+     var wb = Excel.WorkBooks.Add;
+
+     var wsC = wb.Sheets.Add;
+     var wsC = wb.Sheets.Add;
+
+
+     var wsC1 = wb.Sheets(1);
+     wsC1.Name = 'Одинаковые ИНН';
+
+     var wsC2 = wb.Sheets(2);
+     wsC2.Name = 'Одинаковые ФИО';
+
+     var wsC3 = wb.Sheets(3);
+     wsC3.Name = 'Одинаковые документы';
+
+
+     wsC1.Cells( 1, 1 ).Value = "ИНН";  wsC2.Cells( 1, 1 ).Value = "ИНН";  wsC3.Cells( 1, 1 ).Value = "ИНН";
+     wsC1.Cells( 1, 2 ).Value = "Ф";    wsC2.Cells( 1, 2 ).Value = "ФИО";  wsC3.Cells( 1, 2 ).Value = "Ф";
+     wsC1.Cells( 1, 3 ).Value = "И";                                       wsC3.Cells( 1, 3 ).Value = "И";
+     wsC1.Cells( 1, 4 ).Value = "О";                                       wsC3.Cells( 1, 4 ).Value = "О";
+     wsC1.Cells( 1, 5 ).Value = "№";    wsC2.Cells( 1, 3 ).Value = "№";    wsC3.Cells( 1, 5 ).Value = "Документ";
+     wsC1.Cells( 1, 6 ).Value = "Дата"; wsC2.Cells( 1, 4 ).Value = "Дата";
+
+     wsC1.Range( "A1:F1" ).Font.Bold = true;
+     wsC2.Range( "A1:D1" ).Font.Bold = true;
+     wsC3.Range( "A1:E1" ).Font.Bold = true;
+
+
+     SQL=" select  identcode , family, name, soname, docsernum, docdate                                                  \r\n"+
+         " from  tmp_dubeli                                                                                              \r\n"+
+         " where  identcode in   (select identcode from tmp_dubeli group by identcode having count(identcode)&gt;1)           \r\n"+
+         " order by  identcode                                                                                           ";
+
+    numlines = 2;
+    for (v = GDB.CreateCursor(SQL); !v.EOF; v.Next())
+       {
+         wsC1.Cells( numlines, 1 ).Value = v.identcode;
+         wsC1.Cells( numlines, 2 ).Value = v.family;
+         wsC1.Cells( numlines, 3 ).Value = v.name;
+         wsC1.Cells( numlines, 4 ).Value = v.soname;
+         wsC1.Cells( numlines, 5 ).Value = v.docsernum;
+         wsC1.Cells( numlines, 6 ).Value = v.docdate;
+        numlines++;
+       }
+
+
+     SQL=" select  identcode , (family ||' '|| name||' '|| soname) as fio, docsernum, docdate                                                             \r\n"+
+         "   from  tmp_dubeli                                                                                                                      \r\n"+
+         "   where  family ||' '|| name||' '|| soname in                                                                                         \r\n"+
+         "        (select family ||' '|| name||' '|| soname from tmp_dubeli group by 1 having count(family ||' '|| name||' '|| soname)&gt;1 )          \r\n  ";
+         "  order by  2                                                                                                                     ";
+
+
+    numlines = 2;
+    for (v = GDB.CreateCursor(SQL); !v.EOF; v.Next())
+       {
+         wsC2.Cells( numlines, 1 ).Value = v.identcode;
+         wsC2.Cells( numlines, 2 ).Value = v.fio;
+         wsC2.Cells( numlines, 3 ).Value = v.docsernum;
+         wsC2.Cells( numlines, 4 ).Value = v.docdate;
+        numlines++;
+       }
+
+
+      SQL=" select  identcode , family , name , soname , docsernum ||' '|| docdate as docum                                                             \r\n"+
+         "   from  tmp_dubeli                                                                                                                      \r\n"+
+         "   where  docsernum ||' '|| docdate in                                                                                         \r\n"+
+         "        (select docsernum ||' '|| docdate from tmp_dubeli group by 1 having count( docsernum ||' '|| docdate )&gt;1 )               \r\n  ";
+         "  order by  5                                                                                                                     ";
+
+
+    numlines = 2;
+    for (v = GDB.CreateCursor(SQL); !v.EOF; v.Next())
+       {
+         wsC3.Cells( numlines, 1 ).Value = v.identcode;
+         wsC3.Cells( numlines, 2 ).Value = v.family;
+         wsC3.Cells( numlines, 3 ).Value = v.name;
+         wsC3.Cells( numlines, 4 ).Value = v.soname;
+         wsC3.Cells( numlines, 5 ).Value = v.docum;
+        numlines++;
+       }
+
+
+
+
+
+     GDB.ExecSQL("drop table tmp_dubeli");
+   }
+
+
+
+
+/*
+SQL="
+select  distinct   identcode, upper (family) as family, upper(name) as name, upper(soname) as soname, docsernum, docdate
+ from    arm_rv
+ into temp tmp_dubeli with no log
+
+
+
+select  identcode , family, name, soname, docsernum, docdate
+ from  tmp_dubeli
+ where  identcode in   (select identcode from t_dubeli group by identcode having count(identcode)&gt;1)
+ order by  identcode
+ */
+</body>
+    <groups/>
+  </report>
+</root>

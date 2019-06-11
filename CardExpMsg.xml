@@ -1,0 +1,403 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<root>
+  <signature name="pxbank reports group"/>
+  <report name="cardmsgsend" comment="!Контрагенты счета которых закрылись" language="JScript">
+    <classes>
+      <class name="bos32"/>
+    </classes>
+    <body>DEBUG = false;
+dlg = HostApp.NewDialog();
+db  = HostApp.GeneralDataBase;
+fso    = new ActiveXObject("Scripting.FileSystemObject");
+sPathDot = 'c:\\card\\expacc1.dot';
+sPathOut = 'c:\\card\\OUT';
+sMailFrom = 'nobody@profix.com';
+sMsgBody = ' ';
+sMsgTitle = 'Повідомлення від банку.';
+nCardUnit = 0;
+sMailCC = ' ';
+
+if (HostApp.StoredValue("Path").vType == 0)  HostApp.StoredValue("Path").Value = sPathDot;
+if (HostApp.StoredValue("PathOut").vType == 0)  HostApp.StoredValue("PathOut").Value = sPathOut;
+if (HostApp.StoredValue("MsgTitle").vType == 0)  HostApp.StoredValue("MsgTitle").Value = sMsgTitle;
+if (HostApp.StoredValue("MsgBody").vType == 0) HostApp.StoredValue("MsgBody").Value = sMsgBody;
+if (HostApp.StoredValue("CardUnit").vType == 0)  HostApp.StoredValue("CardUnit").Value = nCardUnit;
+if (HostApp.StoredValue("MailFrom").vType == 0)  HostApp.StoredValue("MailFrom").Value = sMailFrom;
+if (HostApp.StoredValue("MailCC").vType == 0)  HostApp.StoredValue("MailCC").Value = sMailCC;
+if (HostApp.StoredValue("DtBegin").vType == 0)  HostApp.StoredValue("DtBegin").Value = BANKDAY.Value;
+if (HostApp.StoredValue("DtEnd").vType == 0)  HostApp.StoredValue("DtEnd").Value = BANKDAY.Value;
+
+dlg.NewField ( "Path","Путь к файлу шаблона:",HostApp.StoredValue ("Path").Value );
+dlg.NewField ( "PathOut","Каталог временных файлов-вложений:", HostApp.StoredValue ("PathOut").Value );
+dlg.NewField ( "MsgTitle",     "Тема сообщения:",HostApp.StoredValue ("MsgTitle").Value );
+dlg.NewField ( "MsgBody",     "Текст сообщения:",HostApp.StoredValue ("MsgBody").Value );
+dlg.NewField ( "MailFrom",     "Обратный адрес",HostApp.StoredValue ("MailFrom").Value );
+dlg.NewField ( "MailCC",     "Копия на",HostApp.StoredValue ("MailCC").Value );
+dlg.NewField ( "CardUnit",     "Карточная программа:",HostApp.StoredValue ("CardUnit").Value );
+dlg.NewField ( "DtBegin",     "Период с:",                 HostApp.StoredValue ("DtBegin").Value );
+dlg.NewField ( "DtEnd",     "Период по:",                 HostApp.StoredValue ("DtEnd").Value );
+
+ db.ExecSQL ("DROP TABLE tmp_log");
+ 
+ SQLCmd = "create temp table tmp_log( \r\n" +
+ "_color smallint,              \r\n" +
+ "action varchar(10),      \r\n" +
+ "message varchar(255)      \r\n" +
+ ") WITH NO LOG \r\n";
+ 
+ RunSQL(SQLCmd, true);
+
+if (dlg.ShowModal()){
+
+DtBegin = new Date (dlg.DtBegin);
+DtEnd   = new Date (dlg.DtEnd);
+dlg.Path = dlg.Path.replace(/\\$/,'');
+dlg.PathOut = dlg.PathOut.replace(/\\$/,'');
+
+//Проверим наличие шаблонов
+
+try
+   {
+    dotFile = fso.GetFile((dlg.Path  + "\\expacc1.dot"));
+   } catch(e) {
+    dotFile = 0;
+    MsgBox('Не удается открыть файл шаблона: \n' + dlg.Path  + "\\expacc1.dot")
+   };
+
+try
+   {
+    dotFile = fso.GetFile((dlg.Path  + "\\expacc2.dot"));
+   } catch(e) {
+    dotFile = 0;
+    MsgBox('Не удается открыть файл шаблона: \n' + dlg.Path + "\\expacc2.dot")
+   };
+
+//и путь для временных файлов
+
+try
+   {
+    PathOut = fso.GetFolder (dlg.PathOut);
+   } catch(e) {
+    PathOut = 0;
+   };
+
+if (PathOut !== 0) {
+if (dotFile !== 0) {
+if (DtBegin.valueOf() &lt;= DtEnd.valueOf()) {
+if (DtEnd.valueOf() &lt;= BANKDAY.Value ) {
+
+// Сохраняем введённые параметры...
+
+HostApp.StoredValue("DtBegin").Value = dlg.DtBegin;
+HostApp.StoredValue("DtEnd").Value = dlg.DtEnd;
+HostApp.StoredValue("Path").Value = dlg.Path;
+HostApp.StoredValue("PathOut").Value = dlg.PathOut;
+HostApp.StoredValue("MailFrom").Value = dlg.MailFrom;
+HostApp.StoredValue("MsgTitle").Value = dlg.MsgTitle;
+
+main(dlg);
+//test(dlg);
+
+} else {MsgBox('Дата конца периода больше даты операционного дня!')}
+} else {
+MsgBox('Дата начала периода должна быть меньше или равна дате конца!')}
+}
+} else {MsgBox('Нет доступа к каталогу: \n' + dlg.PathOut)};
+
+};
+
+function main(dlg) {
+
+var d = new Date();
+var isFolder;
+var v = new Object();
+
+dt = d.getFullYear() + '' + ('0' +(d.getMonth() + 1)).slice(-2) + '' + ('0' + d.getDate()).slice(-2);
+v.dt = dt;
+
+tmpOutDir = dlg.PathOut + "\\" + d.getTime();
+tmpFileName = tmpOutDir + "\\SomeCustId.doc";
+pattern1 = dlg.Path + "\\expacc1.dot";
+pattern2 = dlg.Path + "\\expacc2.dot";
+
+try
+   {
+   fso.CreateFolder(tmpOutDir);
+   } catch(e) {
+   isFolder = 0;
+   };
+
+if (isFolder !== 0){
+
+vDtBeg = new Date (dlg.DtBegin);
+vDtEnd = new Date (dlg.DtEnd);
+
+//Картодержатели с закр. счетами по проэктам
+
+db.ExecSQL("DROP TABLE tmp_cc");
+
+SQLCmd = "select ca.idcustomer as idcust_adm,\r\n" +
+"cw.idcustomer as idcust_mngr, c.idcustomer, apd.data as prtype \r\n" +
+"from cardcontracts cc, customer c, \r\n" +
+"outer (customer_link lw, customer cw, \r\n" +
+"outer (customer_link la, customer ca, \r\n" +
+"outer (addparamsdata apd, addparams ap))) \r\n" +
+"where cc.idcustomer = c.idcustomer \r\n" +
+"and cc.date_expire BETWEEN "+ConvertDateToSqlString(vDtBeg)+" AND "+ConvertDateToSqlString(vDtEnd)+" \r\n" +
+"and cc.contract_status = 'Closed' \r\n" +
+"and lw.linktype = '2134' --replace on 1207 \r\n" +
+"and lw.idcustslave = c.idcustomer \r\n" +
+"and lw.idcustmaster = cw.idcustomer \r\n" +
+"and la.linktype = '1208' --replace on 1201 \r\n" +
+"and la.idcustslave = cw.idcustomer \r\n" +
+"and la.idcustmaster = ca.idcustomer \r\n" +
+"and ca.idcustomer = apd.object_id  \r\n" +
+"and ap.paramcode = 'cardprojecttype' \r\n" +
+"and apd.idparam = ap.idparam \r\n" +
+"and apd.object_type = 'C' \r\n" +
+"into temp tmp_cc with no log \r\n";
+
+RunSQL (SQLCmd, !DEBUG);
+
+if(dlg.CardUnit == 0) vCond = ''                   //для 0 отправляем все по всем
+else vCond = " and tcc.prtype = " + dlg.CardUnit; ;
+
+SQLCmd = "select * from tmp_cc tcc where 1=1" + vCond;
+if (DEBUG) HostApp.CreateGridForm(SQLCmd, true).ShowModal();
+
+SQLCmd = "select count(*) as cnt from tmp_cc tcc where 1=1" + vCond;
+
+SQLCursor = db.CreateCursor(SQLCmd);
+vCnt = SQLCursor.FieldByName('cnt').Value;
+SQLCursor.Close();
+
+if (vCnt &gt; 0) {
+
+MailApp = new ActiveXObject("Outlook.Application");
+WordApp = new ActiveXObject("Word.application");
+
+SQLCmd = "select distinct\r\n" +
+"c.idcustomer, \r\n" +
+"NVL(cc.contract_status,'') as contract_status, --&lt;IS_READY_ACNT_NAME&gt; \r\n" +
+"NVL(cc.date_expire,'') as date_expire, --&lt;DATE_EXPIRE&gt; \r\n" +
+"NVL(c.short_name,'') as short_name, --&lt;SHORT_NAME&gt; \r\n" +
+"NVL(pp.name,'') as name, --&lt;FIRST_NAM&gt; \r\n" +
+"NVL(pp.midname,'') as midname, --&lt;FATHER_S_NAM&gt; \r\n" +
+"NVL(cc.contract_number,'') as contract_number, --&lt;CONTRACT_NUMBER&gt; \r\n" +
+"NVL(cc.amount,'') as amount, --&lt;AMOUNT&gt; \r\n" +
+"NVL(cc.currency,'') as currency, --&lt;CURR&gt; \r\n" +
+"NVL(adr.zipcode,'') as zipcode, --&lt;ADDRESS_ZIP&gt; \r\n" +
+"NVL(adr.town,'') as town, --&lt;CITY&gt; \r\n" +
+"NVL(adr.street,'') as street, --&lt;ADDRESS_LINE_1&gt; \r\n" +
+"NVL(adr.house,'') as house, --&lt;ADDRESS_LINE_2&gt; \r\n" +
+"NVL(adr.appartament,'') as appartament, --&lt;ADDRESS_LINE_3&gt; \r\n" +
+"NVL(eml.email,'') as email, \r\n" +
+"tcc.idcust_adm, \r\n" +
+"(CASE \r\n" +
+"WHEN (cc.currency = '980' and cc.amount &gt; 100) \r\n" +
+"or (cc.currency = '840' and cc.amount &gt; 10) \r\n" +
+"or (cc.currency = '978' and cc.amount &gt; 10) \r\n" +
+"THEN 1 ELSE 2 \r\n" +
+"END) as pattern \r\n" +
+"from \r\n" +
+"cardcontracts cc, \r\n" +
+"customer c, tmp_cc tcc,  \r\n" +
+"outer address adr,  \r\n" +
+"outer priv_person pp,  \r\n" +
+"outer contact eml  \r\n" +
+"where cc.idcustomer = c.idcustomer \r\n" +
+"and pp.idcustomer = c.idcustomer \r\n" +
+"and adr.idcustomer = c.idcustomer \r\n" +
+"and adr.addrtype = 'A' \r\n" +
+"and cc.date_expire BETWEEN "+ConvertDateToSqlString(vDtBeg)+" AND "+ConvertDateToSqlString(vDtEnd)+" \r\n" +
+"and cc.contract_status = 'Closed' \r\n" +
+"and eml.idcustomer = tcc.idcust_adm \r\n" +
+"and eml.main = 'Y' \r\n" +
+"and cc.idcustomer = tcc.idcustomer \r\n" + vCond + " ORDER BY tcc.idcust_adm";
+
+if (DEBUG) HostApp.CreateGridForm(SQLCmd, true).ShowModal();
+
+SQLCursor = db.CreateCursor(SQLCmd);
+
+v.PrevIdAdm = 'x';
+
+while (!SQLCursor.EOF)
+{
+v.IdCust = SQLCursor.FieldByName('idcustomer').AsString;
+v.DateExp = SQLCursor.FieldByName('date_expire').Value;
+v.ShortName = SQLCursor.FieldByName('short_name').Value;
+v.Name = SQLCursor.FieldByName('name').Value;
+v.MidName = SQLCursor.FieldByName('midname').Value;
+v.CNumber = SQLCursor.FieldByName('contract_number').Value;
+v.Amount = SQLCursor.FieldByName('amount').Value;
+v.Currency = SQLCursor.FieldByName('currency').Value;
+v.ZipCode = SQLCursor.FieldByName('zipcode').Value;
+v.Town = SQLCursor.FieldByName('town').Value;
+v.Street = SQLCursor.FieldByName('street').Value;
+v.House = SQLCursor.FieldByName('house').Value;
+v.Appartament = SQLCursor.FieldByName('appartament').Value;
+v.Pattern = SQLCursor.FieldByName('pattern').Value;
+v.Email = SQLCursor.FieldByName('email').Value;
+v.IdAdm = SQLCursor.FieldByName('idcust_adm').Value;
+
+if (v.IdAdm !== v.PrevIdAdm){
+//Если пользователь относится не к предыдущему админу - создадим новое письмо
+//Иначе, добавим его в предыдущее
+if(DEBUG)log(0,v.IdAdm,'Создаем НОВОЕ письмо для администратора');
+
+if (v.PrevIdAdm !== 'x') {
+MyItem.Save(); //Сохраним предыдущий email, если он не первый
+if(DEBUG)log(0,v.PrevIdAdm,'Сохраняем письмо для администратора');
+};
+
+mkattach(tmpOutDir, dlg, v);
+
+MyItem = MailApp.CreateItem(0);
+MyItem.Subject = dlg.MsgTitle;
+MyItem.Importance = 2;
+MyItem.FlagStatus = 2;
+MyItem.Body = dlg.MsgBody;
+MyItem.To = v.Email;
+MyItem.CC = dlg.MailCC;
+MyItem.SentOnBehalfOfName = dlg.MailFrom;
+MyItem.Attachments.Add( tmpFileName, 1)
+
+if(DEBUG)log(0,v.IdCust,'Добавленно вложение по картодержателю');
+
+//Пробуем удалить временный файл
+try{fso.DeleteFile(tmpFileName);} catch(e) {log(2,'file','Не удалось удалить временный файил '+tmpFileName);};
+
+v.PrevIdAdm = v.IdAdm;
+
+} else {
+
+mkattach(tmpOutDir, dlg, v);
+
+MyItem.Attachments.Add( tmpFileName, 1);
+
+if(DEBUG)log(0,v.IdCust,'Добавленно вложение по картодержателю');
+
+//Пробуем удалить временный файл
+try{fso.DeleteFile(tmpFileName);} catch(e) {log(2,'file','Не удалось удалить временный файил '+tmpFileName);};
+
+v.PrevIdAdm = v.IdAdm;
+
+}
+
+SQLCursor.Next();
+
+};
+
+MyItem.Save();
+
+if(DEBUG)log(0,v.IdAdm,'Сохраняем письмо для администратора, завершение работы');
+
+SQLCursor.Close();
+
+WordApp.Quit();
+
+try
+   {
+   fso.DeleteFolder(tmpOutDir);
+   } catch(e) {
+   };
+
+
+} else {MsgBox('Нет данных удовлетворяющих условию.')};
+} else {
+MsgBox('Ошибка создания временного каталога: /n' + tmpOutDir);
+};
+
+if (DEBUG) HostApp.CreateGridForm("select * from tmp_log",true).ShowModal();
+MsgBox('Работа отчета завершена!');
+
+};
+
+function mkattach(tmpOutDir, dlg, v ) {
+
+tmpFileName = tmpOutDir + "\\" + v.dt + "_" + v.IdCust + ".doc";
+//временный файл
+
+MainBookMarks = new Array("ADDRESS_ZIP",v.ZipCode,"Индекс",
+"CITY",v.Town,"город",
+"ADDRESS_LINE_1",v.Street,"улица",
+"ADDRESS_LINE_2",v.House,"дом",
+"ADDRESS_LINE_3",v.Appartament,"квартира",
+"SHORT_NAME",v.ShortName,"краткое наименование клиента",
+"FIRST_NAME",v.Name,"имя",
+"FATHERS_NAME",v.MidName,"отчество",
+"DATE_EXPIRE",v.DateExp,"карта действительна до",
+"CONTRACT_NUMBER",v.CNumber,"номер контракта",
+"AMOUNT",v.Amount,"сумма",
+"CURR",v.Currency,"валюта");
+
+if (v.Pattern == 1) {pattern = pattern1} else {pattern = pattern2};
+
+Doc = WordApp.Documents.Add(pattern);
+Doc.Bookmarks.ShowHidden = true;
+
+//Заполняем шаблон
+for (var n = 0; n &lt; MainBookMarks.length; n+=3 ){
+
+if ((Doc.Bookmarks.Exists(MainBookMarks[n]))) {
+               Doc.Bookmarks(MainBookMarks[n]).Select();
+               WordApp.Selection.Text = MainBookMarks[n+1];
+               WordApp.Selection.Bookmarks.Add((MainBookMarks[n]));
+
+   };
+};
+
+//заменим &lt;n&gt; в строке письма на новую строку
+dlg.MsgBody = dlg.MsgBody.replace(/&lt;n&gt;/g,'\n');
+
+Doc.Fields.Update();
+//WordApp.Visible = true;
+Doc.SaveAs(tmpFileName, 6);
+Doc.Close();
+
+if(DEBUG) log(2,v.dt + "_" + v.IdCust + ".doc",'Созданн временный файл');
+
+};
+
+function ConvertDateToSqlString(dt)
+{
+ return "MDY (" + (dt.getMonth()+1)  + ", " + dt.getDate()  + ", " + dt.getFullYear()  + ")";
+};
+
+function log(color, action, message) {
+RunSQL("insert into tmp_log values('"+color+"','"+action+"','"+message+"')", true);
+};
+
+function RunSQL(cSQLCmd, isBreak)
+{
+  var retvar = true;
+  var lIsBreak = false;
+
+  if (typeof(isBreak) != "boolean" || isBreak == null)
+  {
+  } else {
+    lIsBreak = isBreak;
+  }
+
+  cError = HostApp.GeneralDataBase.ExecSQL(cSQLCmd);
+  if ( cError.length &gt; 0 )
+  {
+    retvar = false;
+    if (lIsBreak)
+    {
+     HostApp.RaiseException(cError + "\r\n" + cSQLCmd);
+    } else {
+     HostApp.MsgBox (cError + "\r\n" + cSQLCmd);
+    }
+  }
+  return retvar;
+};
+
+function test(dlg) {
+
+
+};
+</body>
+    <groups/>
+  </report>
+</root>

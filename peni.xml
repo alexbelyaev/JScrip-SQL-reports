@@ -1,0 +1,820 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<root>
+  <signature name="pxbank reports group"/>
+  <report name="peni" comment="Розрахунок суми претензій" language="JScript">
+    <classes>
+      <class name="agreements"/>
+      <class name="loanservices"/>
+    </classes>
+    <body>   grd = Grid;
+   db = HostApp.GeneralDatabase;
+   var Dlg = HostApp.NewDialog();
+   Exl = new Object();
+   objXL = new ActiveXObject("Excel.Application");
+   vReportExec = false;
+   vIdAgrArr = new Array();
+
+  if (Grid.BranchNames(0) == 'agreements')
+  {
+    vIdAgr = grd.DataSet.FieldByname('idagreement').Value;
+    vIdMainAgr = null;
+  } else
+  {
+    vIdMainAgr = grd.DataSet.FieldByname('idmainagr').Value;
+    vIdAgr = null;
+  };
+
+if (HostApp.StoredValue("DtBegin").vType == 0) HostApp.StoredValue("DtBegin").Value = BANKDAY.Value;
+if (HostApp.StoredValue("DtEnd").vType == 0) HostApp.StoredValue("DtEnd").Value = BANKDAY.Value;
+Dlg.NewField("DtBegin", "Отчетная дата с: ", HostApp.StoredValue("DtBegin").Value);
+Dlg.NewField("DtEnd", "Отчетная дата по: ", HostApp.StoredValue("DtEnd").Value);
+
+//Запросим период
+
+if (Dlg.ShowModal())
+{
+// Rонтроль дат ...
+var DtBegin, DtEnd, bnkday;
+DtBegin = new Date (Dlg.DtBegin);
+DtEnd   = new Date (Dlg.DtEnd);
+bnkday  = new Date (BANKDAY.value);
+
+if (DtBegin.valueOf() &lt;= DtEnd.valueOf()   &amp;&amp;
+DtBegin.valueOf()   &lt;= bnkday.valueOf()  &amp;&amp;
+DtEnd.valueOf()     &lt;= bnkday.valueOf())
+{
+
+// Сохраняем введённые параметры...
+
+HostApp.StoredValue("DtBegin").Value = Dlg.DtBegin;
+HostApp.StoredValue("DtEnd").Value = Dlg.DtEnd;
+
+vSQLDtEnd = ConvertDateToSqlString(DtEnd);
+vSQLDtBegin = ConvertDateToSqlString(DtBegin);
+
+//Выберем список договоров из ген. соглашения
+
+if (vIdMainAgr !== null)
+
+{
+
+SQLCmd = "select idagreement from accountservice where idmainagr = "+vIdMainAgr;
+
+MainAgrCurr = db.CreateCursor(SQLCmd);
+
+vCnt = 0;
+
+while(!MainAgrCurr.EOF)
+{
+
+vIdAgrArr[vCnt] = MainAgrCurr.FieldByName('idagreement').Value;
+MainAgrCurr.Next();
+vCnt++;
+
+};
+} else {
+
+vIdAgrArr[0] = vIdAgr;
+
+};
+
+
+//Пройдем по списку договоров
+
+for (i in vIdAgrArr) {
+
+vIdAgr = vIdAgrArr[i];
+
+SQLCmd = "select count(*) as cnt                                                                               \r\n" +
+"from payoperation po, payoperamount pa                                                                        \r\n" +
+"where po.idoperation = pa.idoperation                                                                         \r\n" +
+"and po.class = 11401                                                                                          \r\n" +
+"and po.idagreement = "+vIdAgr+"                                                                               \r\n" +
+"and pa.preterm IN ('F','P')                                                                                   \r\n" +
+"and pa.idacc IN (select idacc from accservice where acctype IN ('101','109') and idagreement = po.idagreement)\r\n" +
+"and po.dtoper between "+vSQLDtBegin+" AND "+vSQLDtEnd+"                                                       \r\n";
+
+// Проверим есть ли операции пени и штрафа в этом периоде
+
+if (db.CreateCursor(SQLCmd).cnt &gt; 0)
+{
+
+//Дергаем excel для первого договора с пеней
+
+if(!vReportExec){
+
+objXL.SheetsInNewWorkbook = 1;
+objXL.WorkBooks.Add;
+
+} else objXL.Sheets.Add;
+
+vReportExec = true;
+main(Dlg)
+};
+
+};
+
+//Покажем Excel
+
+if (vReportExec) objXL.Application.Visible = true;
+
+} else {
+HostApp.MsgBoxExt(1, "Не верно указан период дат (" +
+                        Date2String(DtBegin) + " -\&gt; " +
+                        Date2String(DtEnd) + ")!\r\n \r\n" +
+                        "Дата начала должна быть не больше даты конца периода.\r\n" +
+                        "Обе даты не должны превышать дату банковского дня." , 4);
+                        };
+} else vReportExec = true;
+
+if (!vReportExec) MsgBox('В запрошенном периоде по этому договору пени и штрафы не начислялись.');
+
+true;
+   
+   
+   function main(D) {
+
+
+var SumDolgPercent, SumDolgPercentEq = null;
+
+//Информация для заголовка
+
+SQLCmd = "select acs.npd, acs.dtbegin, c.short_name, \r\n" +
+"(select short_name from customer where idcustomer = 1) as bankname \r\n" +
+"from accountservice acs,   \r\n" +
+"vaccount a,  \r\n" +
+"customer c  \r\n" +
+"where acs.idagreement = "+vIdAgr+" \r\n" +
+"and a.idacc = acs.idacc          \r\n" +
+"and c.idcustomer = a.idcustomer";
+
+SQLCursor = db.CreateCursor(SQLCmd);
+vTitle2 = SQLCursor.FieldByName('npd').AsString;
+vTitle3 = SQLCursor.FieldByName('dtbegin').AsString;
+vTitle1 = SQLCursor.FieldByName('short_name').AsString;
+vTitle0 = SQLCursor.FieldByName('bankname').AsString;
+SQLCursor.Close();
+
+//Общие суммы в заголовке.
+
+SQLCmd = "select                                                                                                           \r\n" +
+"CASE WHEN (cr.currency = '980') THEN (s2.outgo + s4.outgo) ELSE (s1.outgo + s3.outgo) END SumDolg,                        \r\n" +
+"CASE WHEN (cr.currency = '980') THEN null ELSE (s2.outgo + s4.outgo) END SumDolgEq,                                       \r\n" +
+"CASE WHEN (cr.currency = '980') THEN (s6.outgo) ELSE (s5.outgo) END SumPercent,                                           \r\n" +
+"CASE WHEN (cr.currency = '980') THEN null ELSE (s6.outgo) END SumPercentEq,                                               \r\n" +
+"cr.namecurr as currname,                                                                                                  \r\n" +
+"cr.currency as currency,                                                                                                  \r\n" +
+"( select nbu / nbuto from curr_rates r where r.currency = cr.currency                                                     \r\n" +
+"and r.dtrates = (select max(dtrates) from curr_rates where currency = r.currency and dtrates &lt;= "+vSQLDtEnd+")            \r\n" +
+"and r.timeset = (select max(timeset) from curr_rates where currency = r.currency and dtrates = r.dtrates)                 \r\n" +
+") as NBU                                                                                                                  \r\n" +
+"from accountservice acs,                                                                                                  \r\n" +
+"currency cr,                                                                                                              \r\n" +
+"outer saldo s1,                                                                                                           \r\n" +
+"outer saldo s2,                                                                                                           \r\n" +
+"outer saldo s3,                                                                                                           \r\n" +
+"outer saldo s4,                                                                                                           \r\n" +
+"outer saldo s5,                                                                                                           \r\n" +
+"outer saldo s6                                                                                                            \r\n" +
+"where idagreement = "+vIdAgr+"                                                                                            \r\n" +
+"and cr.currency = (select currency from vaccount where idacc = acs.idacc)                                                  \r\n" +
+"and s1.idacc = (select idacc from accservice where acctype = '101' and idagreement = acs.idagreement)                     \r\n" +
+"and s1.currency &lt;&gt; '980'                                                                                                  \r\n" +
+"and s1.dtend = (select max(dtend) from saldo where idacc = s1.idacc and currency = s1.currency and dtend &lt;= "+vSQLDtEnd+")\r\n" +
+"and s2.idacc = (select idacc from accservice where acctype = '101' and idagreement = acs.idagreement)                     \r\n" +
+"and s2.currency = '980'                                                                                                   \r\n" +
+"and s2.dtend = (select max(dtend) from saldo where idacc = s2.idacc and currency = s2.currency and dtend &lt;= "+vSQLDtEnd+")\r\n" +
+"and s3.idacc = (select idacc from accservice where acctype = '109' and idagreement = acs.idagreement)                     \r\n" +
+"and s3.currency &lt;&gt; '980'                                                                                                  \r\n" +
+"and s3.dtend = (select max(dtend) from saldo where idacc = s3.idacc and currency = s3.currency and dtend &lt;= "+vSQLDtEnd+")\r\n" +
+"and s4.idacc = (select idacc from accservice where acctype = '109' and idagreement = acs.idagreement)                     \r\n" +
+"and s4.currency = '980'                                                                                                   \r\n" +
+"and s4.dtend = (select max(dtend) from saldo where idacc = s4.idacc and currency = s4.currency and dtend &lt;= "+vSQLDtEnd+")\r\n" +
+"and s5.idacc = (select idacc from accservice where acctype = '110' and idagreement = acs.idagreement)                     \r\n" +
+"and s5.currency &lt;&gt; '980'                                                                                                  \r\n" +
+"and s5.dtend = (select max(dtend) from saldo where idacc = s5.idacc and currency = s5.currency and dtend &lt;= "+vSQLDtEnd+")\r\n" +
+"and s6.idacc = (select idacc from accservice where acctype = '110' and idagreement = acs.idagreement)                     \r\n" +
+"and s6.currency = '980'                                                                                                   \r\n" +
+"and s6.dtend = (select max(dtend) from saldo where idacc = s6.idacc and currency = s6.currency and dtend &lt;= "+vSQLDtEnd+")\r\n";
+
+SQLCursor = db.CreateCursor(SQLCmd);
+vSumDolg = -SQLCursor.FieldByName('sumdolg').Value;
+vSumDolgEq = -SQLCursor.FieldByName('sumdolgeq').Value;
+vSumPercent = -SQLCursor.FieldByName('sumpercent').Value;
+vSumPercentEq = -SQLCursor.FieldByName('sumpercenteq').Value;
+vRate = SQLCursor.FieldByName('nbu').Value;
+vCurrName = SQLCursor.FieldByName('currname').AsString;
+vCurrency = SQLCursor.FieldByName('currency').AsString;
+SQLCursor.Close();
+
+if (vCurrency == "980") vCurrName = "грн";
+
+   Exl.vTitle = 'Розрахунок суми претензії '+vTitle0+'\nдо '+vTitle1+' за договором '+vTitle2+' від '+vTitle3+'\n станом на '+Date2String(DtEnd)+'.';
+   Exl.vText1 = 'Сума заборгованості кредиту, '+vCurrName;
+   Exl.vVal1 = vSumDolg;
+   Exl.vText2 = 'Еквівалент суми заборгованості по кредиту, грн.';
+   Exl.vVal2 = vSumDolgEq;
+   Exl.vText3 = 'Загальна сума заборгованості за простроченими %, '+vCurrName;
+   Exl.vVal3 = vSumPercent;
+   Exl.vText4 = 'Еквівалент загальної суми заборгованості за простроченими %, грн.';
+   Exl.vVal4 = vSumPercentEq;
+   Exl.vText5 = 'Курс НБУ';
+   Exl.vVal5 = vRate;
+   Exl.vHeader1 = 'Розрахунок пені за простроченими процентами за договором '+vTitle2+' від '+vTitle3;
+   Exl.vHeader2 = 'Розрахунок штрафу за простроченими процентами за договором '+vTitle2+' від '+vTitle3;
+   Exl.vHeader3 = 'Розрахунок пені за простроченим кредитом згідно договора '+vTitle2+' від '+vTitle3;
+   Exl.vHeader4 = 'Розрахунок штрафу за простроченим кредитом згідно договора '+vTitle2+' від '+vTitle3;
+   Exl.vT2Sum = 'Сума, '+vCurrName;
+   Exl.vT4Label1 = 'Загальна сума пені та штрафу за простроченим кредитом:';
+   Exl.vT4Label3 = 'Загальна сума пені та штрафу за простроченими процентами:';
+   Exl.vT4Label2 = 'Всього заборгованість по кредиту, простроченим %, пені, штрафу, простроченій комісії по курсу НБУ, грн.';
+   Exl.vSign1 = 'Голова Правління АТ "КБ"Експобанк"';
+   Exl.vSign2 = 'Головний бухгалтер АТ "КБ"Експобанк"';
+   Exl.vSign1FIO = 'Гетьманенко Ю.І.';
+   Exl.vSign2FIO = 'Скляренко Т.В.';
+   Exl.vSign3 = 'Виконав:';
+   Exl.vSign3FIO = '';
+
+   MakeExcel(Exl);
+
+};
+
+function MakeExcel (p)
+{
+
+vDropPeni = vDropFine = vDropPeni2 = vDropFine2 = false;
+
+vSumFine = vSumFine2 = vSumPeni = vSumPeni2 = 0; //Сумма пени и штрафа
+
+//EXCEL VAR
+   
+   var xlCenter =  -4108;
+   var xlContinuous = 1;
+   var xlThin = 2;
+   var xlContext =-5002;
+
+//objXL.ActiveSheet.Name = 'Транш 1';
+
+objXL.Cells.NumberFormat = "0.00";
+objXL.Columns("E:E").NumberFormat = "General";
+objXL.Columns("C:D").NumberFormat = "m/d/yyyy";
+
+//Ширина столбцов
+
+objXL.Columns("A:A").ColumnWidth = 13.5;
+objXL.Columns("B:B").ColumnWidth = 8.5;
+objXL.Columns("C:C").ColumnWidth = 11.4;
+objXL.Columns("D:D").ColumnWidth = 11.4;
+objXL.Columns("E:E").ColumnWidth = 9.3;
+objXL.Columns("F:F").ColumnWidth = 15.7;
+objXL.Columns("G:G").ColumnWidth = 12.4;
+
+//Title
+
+objXL.Range("A2:G2").Select;
+objXL.Selection.MergeCells = true;
+objXL.Selection.HorizontalAlignment = xlCenter;
+objXL.Selection.VerticalAlignment = xlCenter;
+objXL.Selection.WrapText = true;
+objXL.Selection.RowHeight = 45;
+objXL.Selection.Font.Bold = true;
+objXL.Range("A2") = p.vTitle;
+
+// Header. Общие суммы.
+
+objXL.Range("A4:G8").Select;
+objXL.Selection.Borders.LineStyle = xlContinuous;
+objXL.Selection.Borders.Weight = xlThin;
+objXL.Range("A4:F4").MergeCells = true;
+objXL.Range("A4").Font.Bold = true;
+objXL.Range("A5:F5").MergeCells = true;
+objXL.Range("A5").Font.Bold = true;
+objXL.Range("A6:F6").MergeCells = true;
+objXL.Range("A6").Font.Bold = true;
+objXL.Range("A7:F7").MergeCells = true;
+objXL.Range("A7").Font.Bold = true;
+objXL.Range("A8:F8").MergeCells = true;
+objXL.Range("A8").Font.Color = -16776961;
+objXL.Range("A4") = p.vText1;
+objXL.Range("A5") = p.vText2;
+objXL.Range("A6") = p.vText3;
+objXL.Range("A7") = p.vText4;
+objXL.Range("A8") = p.vText5;
+objXL.Range("G4") = p.vVal1;
+objXL.Range("G5") = p.vVal2;
+objXL.Range("G6") = p.vVal3;
+objXL.Range("G7") = p.vVal4;
+objXL.Range("G8") = p.vVal5;
+objXL.Range("G8").NumberFormat = "0.000"
+
+// Заголовок Таблици 1. Пеня по процентам.
+
+objXL.Range("A9:G9").MergeCells = true;
+objXL.Range("A9:G9").Font.Bold = true;
+objXL.Range("A9:G9").HorizontalAlignment = xlCenter;
+objXL.Range("A9:G9").VerticalAlignment = xlCenter;
+objXL.Range("A9:G9").RowHeight = 30;
+objXL.Range("A9:G9").WrapText = true;
+objXL.Range("A9") = p.vHeader1;
+
+//Таблици 1
+
+objXL.Range("A10:G13").Select;
+objXL.Selection.Borders.LineStyle = xlContinuous;
+objXL.Selection.Borders.Weight = xlThin;
+objXL.Selection.HorizontalAlignment = xlCenter;
+objXL.Selection.VerticalAlignment = xlCenter;
+objXL.Selection.WrapText = true;
+objXL.Range("A10:A11").MergeCells = true;
+objXL.Range("B10:B11").MergeCells = true;
+objXL.Range("C10:D10").MergeCells = true;
+objXL.Range("E10:E11").MergeCells = true;
+objXL.Range("F10:F11").MergeCells = true;
+objXL.Range("G10:G11").MergeCells = true;
+objXL.Range("A13:E13").MergeCells = true;
+objXL.Range("A10") = p.vT2Sum;
+objXL.Range("A13") = 'Сума пені за простроченими процентами, грн.';
+objXL.Range("A13").Font.Bold = true;
+objXL.Range("B10") = 'Пеня %';
+objXL.Range("C10") = 'Період нарахування';
+objXL.Range("C11") = 'З';
+objXL.Range("D11") = 'По';
+objXL.Range("E10") = 'Кількість днів';
+objXL.Range("F10") = 'Нараховано, грн.';
+objXL.Range("G10") = 'Сплачено';
+
+// Заголовок Таблици 2. (Штраф по процентам)
+
+objXL.Range("A14:G14").MergeCells = true;
+objXL.Range("A14:G14").Font.Bold = true;
+objXL.Range("A14:G14").HorizontalAlignment = xlCenter;
+objXL.Range("A14:G14").VerticalAlignment = xlCenter;
+objXL.Range("A14:G14").RowHeight = 30;
+objXL.Range("A14:G14").WrapText = true;
+objXL.Range("A14") = p.vHeader2;
+
+//Таблици 2
+
+objXL.Range("A15:G18").Select;
+objXL.Selection.Borders.LineStyle = xlContinuous;
+objXL.Selection.Borders.Weight = xlThin;
+objXL.Selection.HorizontalAlignment = xlCenter;
+objXL.Selection.VerticalAlignment = xlCenter;
+objXL.Selection.WrapText = true;
+objXL.Range("A15:A16").MergeCells = true;
+objXL.Range("B15:B16").MergeCells = true;
+objXL.Range("C15:D15").MergeCells = true;
+objXL.Range("E15:E16").MergeCells = true;
+objXL.Range("F15:F16").MergeCells = true;
+objXL.Range("G15:G16").MergeCells = true;
+objXL.Range("A18:E18").MergeCells = true;
+objXL.Range("A15") = p.vT2Sum;
+objXL.Range("A18") = 'Сума штрафу за простроченими процентами, грн.';
+objXL.Range("A18").Font.Bold = true;
+objXL.Range("B15") = 'Штраф %';
+objXL.Range("C15") = 'Період нарахування';
+objXL.Range("C16") = 'З';
+objXL.Range("D16") = 'По';
+objXL.Range("E15") = 'Кількість днів';
+objXL.Range("F15") = 'Нараховано, грн.';
+objXL.Range("G15") = 'Сплачено';
+
+// Заголовок Таблици 3 (Пеня по кредиту)
+
+objXL.Range("A19:G19").MergeCells = true;
+objXL.Range("A19:G19").Font.Bold = true;
+objXL.Range("A19:G19").HorizontalAlignment = xlCenter;
+objXL.Range("A19:G19").VerticalAlignment = xlCenter;
+objXL.Range("A19:G19").RowHeight = 30;
+objXL.Range("A19:G19").WrapText = true;
+objXL.Range("A19") = p.vHeader3;
+
+//Таблици 3
+
+objXL.Range("A20:G23").Select;
+objXL.Selection.Borders.LineStyle = xlContinuous;
+objXL.Selection.Borders.Weight = xlThin;
+objXL.Selection.HorizontalAlignment = xlCenter;
+objXL.Selection.VerticalAlignment = xlCenter;
+objXL.Selection.WrapText = true;
+objXL.Range("A20:A21").MergeCells = true;
+objXL.Range("B20:B21").MergeCells = true;
+objXL.Range("C20:D20").MergeCells = true;
+objXL.Range("E20:E21").MergeCells = true;
+objXL.Range("F20:F21").MergeCells = true;
+objXL.Range("G20:G21").MergeCells = true;
+objXL.Range("A23:E23").MergeCells = true;
+objXL.Range("A20") = p.vT2Sum;
+objXL.Range("A23") = 'Сума пені за простроченими кредитиом, грн.';
+objXL.Range("A23").Font.Bold = true;
+objXL.Range("B20") = 'Пеня %';
+objXL.Range("C20") = 'Період нарахування';
+objXL.Range("C21") = 'З';
+objXL.Range("D21") = 'По';
+objXL.Range("E20") = 'Кількість днів';
+objXL.Range("F20") = 'Нараховано, грн.';
+objXL.Range("G20") = 'Сплачено';
+
+// Заголовок Таблици 4 (Штраф по кредиту)
+
+objXL.Range("A24:G24").MergeCells = true;
+objXL.Range("A24:G24").Font.Bold = true;
+objXL.Range("A24:G24").HorizontalAlignment = xlCenter;
+objXL.Range("A24:G24").VerticalAlignment = xlCenter;
+objXL.Range("A24:G24").RowHeight = 30;
+objXL.Range("A24:G24").WrapText = true;
+objXL.Range("A24") = p.vHeader4;
+
+//Таблици 4
+
+objXL.Range("A25:G28").Select;
+objXL.Selection.Borders.LineStyle = xlContinuous;
+objXL.Selection.Borders.Weight = xlThin;
+objXL.Selection.HorizontalAlignment = xlCenter;
+objXL.Selection.VerticalAlignment = xlCenter;
+objXL.Selection.WrapText = true;
+objXL.Range("A25:A26").MergeCells = true;
+objXL.Range("B25:B26").MergeCells = true;
+objXL.Range("C25:D25").MergeCells = true;
+objXL.Range("E25:E26").MergeCells = true;
+objXL.Range("F25:F26").MergeCells = true;
+objXL.Range("G25:G26").MergeCells = true;
+objXL.Range("A28:E28").MergeCells = true;
+objXL.Range("A25") = p.vT2Sum;
+objXL.Range("A28") = 'Сума штрафу за простроченим кредитом, грн.';
+objXL.Range("A28").Font.Bold = true;
+objXL.Range("B25") = 'Штраф %';
+objXL.Range("C25") = 'Період нарахування';
+objXL.Range("C26") = 'З';
+objXL.Range("D26") = 'По';
+objXL.Range("E25") = 'Кількість днів';
+objXL.Range("F25") = 'Нараховано, грн.';
+objXL.Range("G25") = 'Сплачено';
+
+//Footer. Таблица общих сумм.
+
+objXL.Range("A30:G30").Select;
+objXL.Selection.Borders.LineStyle = xlContinuous;
+objXL.Selection.Borders.Weight = xlThin;
+objXL.Selection.VerticalAlignment = xlCenter;
+objXL.Selection.WrapText = true;
+objXL.Range("F30").HorizontalAlignment = xlCenter;
+objXL.Range("A30:E30").MergeCells = true;
+objXL.Range("A30") = p.vT4Label2;
+objXL.Range("A30").Font.Bold = true;
+objXL.Range("A30").RowHeight = 32;
+
+//Подписи (Берем по связям с правом подписи S,F)
+
+SQLCmd = "SELECT                                                                \r\n" +
+"    (pp.surname||' '||SUBSTR(pp.name,1,1)||'.'||SUBSTR(pp.midname,1,1)||'.')   \r\n" +
+" as name,                                                                      \r\n" +
+"    jc.name as name2                                                           \r\n" +
+"FROM                                                                           \r\n" +
+"    ((customer_link cl INNER JOIN mngr_cstmr_acc mca ON                        \r\n" +
+"        cl.idcustlink = mca.idcustlink)                                        \r\n" +
+"     INNER JOIN priv_person pp ON                                              \r\n" +
+"        cl.idcustmaster = pp.idcustomer)                                       \r\n" +
+"     LEFT OUTER JOIN jobcode jc ON                                             \r\n" +
+"        cl.jobcode = jc.jobcode                                                \r\n" +
+"WHERE                                                                          \r\n" +
+"    cl.idcustslave = 1 AND                                                     \r\n" +
+"    cl.linktype MATCHES '1[2,3]02' AND                                         \r\n" +
+"    mca.signright IN ('S', 'F') AND                                            \r\n" +
+"    (mca.signdtend IS NULL OR mca.signdtend &gt;= GetWorkODB_DAY() )           \r\n" +
+"ORDER BY                                                                       \r\n" +
+"    mca.signright ASC                                                          \r\n";
+
+SQLCur =  db.CreateCursor(SQLCmd);
+
+vSRow= 32;
+
+while (!SQLCur.EOF)
+
+{
+
+  vRange = 'A'+vSRow+':B'+(vSRow+1);
+  objXL.Range(vRange).MergeCells = true;
+  vRange = 'A'+vSRow;
+  objXL.Range(vRange).WrapText = true;
+  objXL.Range(vRange).Font.Bold = true;
+  objXL.Range(vRange) = SQLCur.FieldByName('name2').AsString;
+  vRange = 'F'+(vSRow+1);
+  objXL.Range(vRange).Font.Bold = true;
+  objXL.Range(vRange) = SQLCur.FieldByName('name').AsString;
+
+  vSRow+=3;
+
+  SQLCur.Next();
+
+};
+
+objXL.Range(('A'+vSRow)) = p.vSign3;
+
+// Наполним таблицу 1 "пени по %" данными
+
+SQLCmd = "select pa.srcvalue, pa.formula,                                                                      \r\n" +
+"pa.dtbegin, pa.dtend, (pa.dtend - pa.dtbegin + 1) as days, pa.partamount                                      \r\n" +
+"from payoperation po, payoperamount pa                                                                        \r\n" +
+"where po.idoperation = pa.idoperation                                                                         \r\n" +
+"and po.class = '11401'                                                                                        \r\n" +
+"and po.idagreement = "+vIdAgr+"                                                                               \r\n" +
+"and pa.preterm = 'F'                                                                                          \r\n" +
+"and pa.idacc = (select idacc from accservice where acctype = '110' and idagreement = po.idagreement)          \r\n" +
+"and po.dtoper between "+vSQLDtBegin+" AND "+vSQLDtEnd+"                                                       \r\n" +
+"order by pa.dtend DESC                                                                                        \r\n";
+
+Peni = db.CreateCursor(SQLCmd);
+
+if(Peni.EOF){ vRow = 13; vDropPeni = true; vPeniRange = (vRow-4)+':'+vRow;} else vRow = 12;
+
+while(!Peni.EOF)
+{
+
+if (vRow !== 12){
+objXL.Rows("12:12").Select;
+objXL.Selection.Insert;
+};
+
+vPartAmount = Peni.FieldByName('partamount').Value;
+vFormula = Peni.FieldByName('formula').AsString;
+vFormula = vFormula.replace(/\D/g,'');
+if (vRate !== null) vPartAmount = vPartAmount * vRate;
+objXL.Range("A12") = Peni.FieldByName('srcvalue').Value;
+objXL.Range("B12") = vFormula;
+objXL.Range("C12") = Peni.FieldByName('dtbegin').Value;
+objXL.Range("D12") = Peni.FieldByName('dtend').Value;
+objXL.Range("E12") = Peni.FieldByName('days').AsString;
+objXL.Range("F12") = vPartAmount;
+
+vRow++;
+
+vSumPeni += vPartAmount;
+
+Peni.Next();
+
+};
+
+Peni.Close();
+
+objXL.Range("F"+vRow) = vSumPeni;
+
+// Наполним таблицу 2 "штраф по %" данными
+
+SQLCmd = "select pa.srcvalue, pa.formula,                                                                      \r\n" +
+"pa.dtbegin, pa.dtend, (pa.dtend - pa.dtbegin + 1) as days, pa.partamount                                      \r\n" +
+"from payoperation po, payoperamount pa                                                                        \r\n" +
+"where po.idoperation = pa.idoperation                                                                         \r\n" +
+"and po.class = 11401                                                                                          \r\n" +
+"and po.idagreement = "+vIdAgr+"                                                                               \r\n" +
+"and pa.preterm = 'P'                                                                                          \r\n" +
+"and pa.idacc = (select idacc from accservice where acctype = '110' and idagreement = po.idagreement)          \r\n" +
+"and po.dtoper between "+vSQLDtBegin+" AND "+vSQLDtEnd+"                                                       \r\n" +
+"order by pa.dtend DESC                                                                                        \r\n";
+
+Fine = db.CreateCursor(SQLCmd);
+
+if(Fine.EOF){ vRow += 5; vDropFine = true; vFineRange = (vRow-4)+':'+vRow;} else vRow += 4;
+
+n = vRow;
+
+while(!Fine.EOF)
+{
+
+if (vRow !== n){
+objXL.Rows(n+":"+n).Select;
+objXL.Selection.Insert;
+};
+
+vPartAmount = Fine.FieldByName('partamount').Value;
+vFormula = Fine.FieldByName('formula').AsString;
+vFormula = vFormula.replace(/\D/g,'');
+if (vRate !== null) vPartAmount = vPartAmount * vRate;
+
+objXL.Range("A"+n) = Fine.FieldByName('srcvalue').Value;
+objXL.Range("B"+n) = vFormula;
+objXL.Range("C"+n) = "-";
+objXL.Range("D"+n) = "-";
+objXL.Range("E"+n) = "-";
+objXL.Range("F"+n) = vPartAmount;
+
+vRow++;
+
+vSumFine += vPartAmount;
+
+Fine.Next();
+
+};
+
+Fine.Close();
+
+objXL.Range("F"+vRow) = vSumFine;
+
+// Добавим итоги по таблице 1 и 2
+
+if(!vDropPeni &amp;&amp; !vDropFine)
+{
+vRow++;
+objXL.Rows(vRow+":"+vRow).Insert;
+objXL.Rows(vRow+":"+vRow).Insert;
+vRow++;
+objXL.Range('A'+vRow+':G'+vRow).Borders.Weight = xlThin;
+objXL.Range('A'+vRow+':E'+vRow).MergeCells = true;
+objXL.Range('A'+vRow) = p.vT4Label3;
+objXL.Range('A'+vRow).Font.Bold = true;
+objXL.Range('A'+vRow).VerticalAlignment = xlCenter;
+objXL.Range('F'+vRow) = vSumPeni + vSumFine;
+};
+
+// Наполним таблицу 3 "пени по кредиту" данными
+
+SQLCmd = "select pa.srcvalue, pa.formula,                                                                      \r\n" +
+"pa.dtbegin, pa.dtend, (pa.dtend - pa.dtbegin + 1) as days, pa.partamount                                      \r\n" +
+"from payoperation po, payoperamount pa                                                                        \r\n" +
+"where po.idoperation = pa.idoperation                                                                         \r\n" +
+"and po.class = 11401                                                                                          \r\n" +
+"and po.idagreement = "+vIdAgr+"                                                                               \r\n" +
+"and pa.preterm = 'F'                                                                                          \r\n" +
+"and pa.idacc = (select idacc from accservice where acctype = '109' and idagreement = po.idagreement)          \r\n" +
+"and po.dtoper between "+vSQLDtBegin+" AND "+vSQLDtEnd+"                                                       \r\n" +
+"order by pa.dtend DESC                                                                                        \r\n";
+
+Peni2 = db.CreateCursor(SQLCmd);
+
+if(Peni2.EOF){ vRow += 5; vDropPeni2 = true; vPeni2Range = (vRow-4)+':'+vRow;} else vRow += 4;
+
+n = vRow;
+
+while(!Peni2.EOF)
+{
+
+if (vRow !== n){
+objXL.Rows(n+":"+n).Select;
+objXL.Selection.Insert;
+};
+
+vPartAmount = Peni2.FieldByName('partamount').Value;
+vFormula = Peni2.FieldByName('formula').AsString;
+vFormula = vFormula.replace(/\D/g,'');
+if (vRate !== null) vPartAmount = vPartAmount * vRate;
+
+objXL.Range("A"+n) = Peni2.FieldByName('srcvalue').Value;
+objXL.Range("B"+n) = vFormula;
+objXL.Range("C"+n) = Peni2.FieldByName('dtbegin').Value;
+objXL.Range("D"+n) = Peni2.FieldByName('dtend').Value;
+objXL.Range("E"+n) = Peni2.FieldByName('days').AsString;
+objXL.Range("F"+n) = vPartAmount;
+
+vRow++;
+
+vSumPeni2 += vPartAmount;
+
+Peni2.Next();
+
+};
+
+Peni2.Close();
+
+//Сумма пени по кредиту
+
+objXL.Range("F"+vRow) = vSumPeni2;
+
+// Наполним таблицу 4 "штрафы по кредиту" данными
+
+SQLCmd = "select pa.srcvalue, pa.formula,                                                                      \r\n" +
+"pa.dtbegin, pa.dtend, (pa.dtend - pa.dtbegin + 1) as days, pa.partamount                                      \r\n" +
+"from payoperation po, payoperamount pa                                                                        \r\n" +
+"where po.idoperation = pa.idoperation                                                                         \r\n" +
+"and po.class = 11401                                                                                          \r\n" +
+"and po.idagreement = "+vIdAgr+"                                                                               \r\n" +
+"and pa.preterm = 'P'                                                                                          \r\n" +
+"and pa.idacc = (select idacc from accservice where acctype = '109' and idagreement = po.idagreement)          \r\n" +
+"and po.dtoper between "+vSQLDtBegin+" AND "+vSQLDtEnd+"                                                       \r\n" +
+"order by pa.dtend DESC                                                                                        \r\n";
+
+Fine2 = db.CreateCursor(SQLCmd);
+
+if(Fine2.EOF){ vRow += 5; vDropFine2 = true; vFine2Range = (vRow-4)+':'+vRow;} else vRow += 4;
+
+n = vRow;
+
+while(!Fine2.EOF)
+{
+
+if (vRow !== n){
+objXL.Rows(n+":"+n).Select;
+objXL.Selection.Insert;
+};
+
+vPartAmount = Fine2.FieldByName('partamount').value;
+vFormula = Fine2.FieldByName('formula').AsString;
+vFormula = vFormula.replace(/\D/g,'');
+if (vRate !== null) vPartAmount = vPartAmount * vRate;
+
+objXL.Range("A"+n) = Fine2.FieldByName('srcvalue').Value;
+objXL.Range("B"+n) = vFormula;
+objXL.Range("C"+n) = "-";
+objXL.Range("D"+n) = "-";
+objXL.Range("E"+n) = "-";
+objXL.Range("F"+n) = vPartAmount
+
+vRow++;
+
+vSumFine2 += vPartAmount;
+
+Fine2.Next();
+
+};
+
+Fine2.Close();
+
+//Сумма штрафа
+
+objXL.Range("F"+vRow) = vSumFine2;
+
+// Добавим итоги по таблице 3 и 4
+
+if(!vDropPeni2 &amp;&amp; !vDropFine2)
+{
+vRow++;
+objXL.Rows(vRow+":"+vRow).Insert;
+objXL.Rows(vRow+":"+vRow).Insert;
+vRow++;
+objXL.Range('A'+vRow+':G'+vRow).Borders.Weight = xlThin;
+objXL.Range('A'+vRow+':E'+vRow).MergeCells = true;
+objXL.Range('A'+vRow) = p.vT4Label1;
+objXL.Range('A'+vRow).Font.Bold = true;
+objXL.Range('A'+vRow).VerticalAlignment = xlCenter;
+objXL.Range('F'+vRow) = vSumPeni2 + vSumFine2;
+};
+
+//Заполним подвал.
+//Общая сумма пени и штрафа.
+
+vRow += 2;
+if (vCurrency == "980"){
+objXL.Range("F"+vRow) = vSumFine + vSumPeni + vSumFine2 + vSumPeni2 + vSumDolg + vSumPercent;
+} else {
+objXL.Range("F"+vRow) = vSumFine + vSumPeni + vSumFine2 + vSumPeni2 + vSumDolgEq + vSumPercentEq;
+};
+
+//Удалим не нужные строки
+
+if (vDropFine2) objXL.Rows(vFine2Range).Delete;
+
+if (vDropPeni2) objXL.Rows(vPeni2Range).Delete;
+
+if (vDropFine) objXL.Rows(vFineRange).Delete;
+
+if (vDropPeni) objXL.Rows(vPeniRange).Delete;
+
+if (vCurrency == "980")
+{
+objXL.Rows("5:5").Select;
+objXL.Selection.Delete;
+objXL.Rows("6:7").Select;
+objXL.Selection.Delete;
+};
+
+};
+
+function RunSQL (cSQLCmd, isBreak)
+{
+ var retvar = true;
+ var lIsBreak = false;
+
+ if (typeof(isBreak) != "boolean" || isBreak == null)
+ {
+ } else {
+  lIsBreak = isBreak;
+ }
+
+ cError = HostApp.GeneralDataBase.ExecSQL(cSQLCmd);
+ if ( cError.length &gt; 0 )
+ {
+  retvar = false;
+  if (lIsBreak)
+  {
+   HostApp.RaiseException(cError + "\r\n" + cSQLCmd);
+  } else {
+   MsgBox(cError + "\r\n" + cSQLCmd);
+  }
+ }
+ return retvar;
+};
+
+function Date2String(dt)
+{
+ var t_month = dt.getMonth()+1;
+ if (t_month &lt; 10) {t_month = "0" + t_month;} else {t_month = "" + t_month;}
+ return dt.getDate() + "." + t_month + "." + dt.getFullYear();
+};
+
+function ConvertDateToSqlString(dt)
+{
+ return "MDY (" + (dt.getMonth()+1)  + ", " + dt.getDate()  + ", " + dt.getFullYear()  + ")";
+};
+</body>
+    <groups/>
+  </report>
+</root>

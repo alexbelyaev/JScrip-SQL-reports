@@ -1,0 +1,375 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<root>
+  <signature name="pxbank reports group"/>
+  <report name="cardmsgsend2" comment="!Отправка сообщений клиентам" language="JScript">
+    <classes>
+      <class name="bos32"/>
+    </classes>
+    <body>DEBUG = true;
+dlg = HostApp.NewDialog();
+db  = HostApp.GeneralDataBase;
+fso    = new ActiveXObject("Scripting.FileSystemObject");
+sPathDot = 'c:\\card\\message.txt';
+sPathOut = 'c:\\card\\sendfile';
+sMailFrom = 'nobody@profix.com';
+//sMsgBody = ' ';
+//sMsgTitle = 'Повідомлення від банку.';
+nCardUnit = 0;
+sMailCC = ' ';
+bSecure = true;
+bAttachToAll = false;
+bNotSendEmpty = true;
+
+if (HostApp.StoredValue("Path").vType == 0)  HostApp.StoredValue("Path").Value = sPathDot;
+if (HostApp.StoredValue("PathOut").vType == 0)  HostApp.StoredValue("PathOut").Value = sPathOut;
+if (HostApp.StoredValue("Secure").vType == 0)  HostApp.StoredValue("Secure").Value = bSecure;
+if (HostApp.StoredValue("AttachToAll").vType == 0)  HostApp.StoredValue("AttachToAll").Value = bAttachToAll;
+if (HostApp.StoredValue("NotSendEmpty").vType == 0)  HostApp.StoredValue("NotSendEmpty").Value = bNotSendEmpty;
+//if (HostApp.StoredValue("MsgTitle").vType == 0)  HostApp.StoredValue("MsgTitle").Value = sMsgTitle;
+//if (HostApp.StoredValue("MsgBody").vType == 0) HostApp.StoredValue("MsgBody").Value = sMsgBody;
+if (HostApp.StoredValue("CardUnit").vType == 0)  HostApp.StoredValue("CardUnit").Value = nCardUnit;
+if (HostApp.StoredValue("MailFrom").vType == 0)  HostApp.StoredValue("MailFrom").Value = sMailFrom;
+if (HostApp.StoredValue("MailCC").vType == 0)  HostApp.StoredValue("MailCC").Value = sMailCC;
+
+dlg.NewField ( "Path","Путь к файлу шаблона письма:",HostApp.StoredValue ("Path").Value );
+dlg.NewField ( "PathOut","Каталог файлов-вложений:", HostApp.StoredValue ("PathOut").Value );
+dlg.NewField ( "AttachToAll","Отправлять вложения всем", HostApp.StoredValue ("AttachToAll").Value );
+dlg.NewField ( "NotSendEmpty","Не отправлять без вложения", HostApp.StoredValue ("NotSendEmpty").Value );
+dlg.NewField ( "Secure","Secure", HostApp.StoredValue ("Secure").Value );
+//dlg.NewField ( "MsgTitle",     "Тема сообщения:",HostApp.StoredValue ("MsgTitle").Value );
+//dlg.NewField ( "MsgBody",     "Текст сообщения:",HostApp.StoredValue ("MsgBody").Value );
+dlg.NewField ( "MailFrom",     "Обратный адрес",HostApp.StoredValue ("MailFrom").Value );
+dlg.NewField ( "MailCC",     "Копия на",HostApp.StoredValue ("MailCC").Value );
+dlg.NewField ( "CardUnit",     "Карточная программа:",HostApp.StoredValue ("CardUnit").Value );
+
+ db.ExecSQL ("DROP TABLE tmp_log");
+ 
+ SQLCmd = "create temp table tmp_log( \r\n" +
+ "_color smallint,              \r\n" +
+ "action varchar(10),      \r\n" +
+ "message varchar(255)      \r\n" +
+ ") WITH NO LOG \r\n";
+ 
+ RunSQL(SQLCmd, true);
+ 
+ db.ExecSQL ("DROP TABLE tmp_files");
+ 
+ SQLCmd = "create temp table tmp_files( \r\n" +
+ "filename varchar(255),      \r\n" +
+ "idfile varchar(255)      \r\n" +
+ ") WITH NO LOG \r\n";
+ 
+ RunSQL(SQLCmd, true);
+
+if (dlg.ShowModal()){
+
+dlg.PathOut = dlg.PathOut.replace(/\\$/,'');
+
+//Проверим наличие шаблона письма
+
+try
+   {
+    dotFile = fso.GetFile((dlg.Path));
+   } catch(e) {
+    dotFile = 0;
+   };
+
+//и путь файлов вложений
+
+try
+   {
+    PathOut = fso.GetFolder (dlg.PathOut);
+   } catch(e) {
+    PathOut = 0;
+   };
+
+if (PathOut !== 0) {
+if (dotFile !== 0) {
+
+// Сохраняем введённые параметры...
+
+HostApp.StoredValue("Path").Value = dlg.Path;
+HostApp.StoredValue("PathOut").Value = dlg.PathOut;
+HostApp.StoredValue("MailFrom").Value = dlg.MailFrom;
+//HostApp.StoredValue("MsgTitle").Value = dlg.MsgTitle;
+
+main(dlg, fso);
+//test(dlg, fso);
+
+} else {MsgBox('Не удается открыть файл шаблона письма: \n' + dlg.Path)};
+} else {MsgBox('Нет доступа к каталогу: \n' + dlg.PathOut)};
+
+};
+
+function main(dlg, fso) {
+
+var v = new Object();
+
+//Получим тему и текст письма из файла
+
+MsgFile = fso.OpenTextFile(dlg.Path, 1);
+Msg = new String(MsgFile.ReadAll());
+MsgTitle = Msg.replace(/(\n.+)+/,'');
+MsgText = Msg.replace(/.+\n/,'');
+MsgFile.Close();
+if(dlg.Secure) MsgTitle = 'Secure. ' + MsgTitle; 
+
+Msg = null;
+MsgFile = null;
+
+//Получим список файлов
+
+Folder = fso.GetFolder(dlg.PathOut);
+
+var FileCollection = Folder.Files;
+
+FilesCnt = FileCollection.Count;
+
+if((FilesCnt == 0) &amp;&amp; (dlg.NotSendEmpty)) MsgBox ('Нет файлов для отправки!');
+else {
+
+if(FilesCnt &gt; 0) {
+
+for(var objEnum = new Enumerator(FileCollection); !objEnum.atEnd(); objEnum.moveNext()) {
+	   var fname = new String(objEnum.item());
+	   fld1 = fname.replace(/^.+(\\)/,'');
+	   fld2 = fld1.replace(/0+/,'').replace(/[\.][^\.]+$/,'');
+	   RunSQL("insert into tmp_files values ('"+fld1+"','"+fld2+"')", true);
+	}
+	fname = null;
+	fld1 = fld2 = null;
+	
+	delete objEnum;
+	objEnum = null;
+
+	FileCollection = null;
+	Folder = null;
+} else {RunSQL("insert into tmp_files values('')", true);};
+
+if (DEBUG) HostApp.CreateGridForm('select * from tmp_files', true).ShowModal();
+
+MailApp = new ActiveXObject("Outlook.Application");
+
+if(dlg.CardUnit == 0) vCond = ''                   //для 0 отправляем всем админам
+else vCond = " and apd.data = " + dlg.CardUnit; ;
+
+//стоит флаг "всем" отправляем всем админам, иначе анализируем имя файла
+if(dlg.AttachToAll){
+
+SQLCmd = "select distinct c.idcustomer as idadmin, NVL(eml.email,'') as email, f.filename \r\n" +
+"from customer c, addparams ap, addparamsdata apd, tmp_files f, \r\n" +
+"outer contact eml \r\n" +
+"where c.idcustomer = apd.object_id \r\n" +
+"and ap.paramcode = 'cardprojecttype' \r\n" +
+"and apd.idparam = ap.idparam \r\n" +
+"and apd.object_type = 'C' \r\n" +
+"and eml.idcustomer = c.idcustomer \r\n" +
+"and eml.main = 'Y' \r\n" +
+"and apd.object_type = 'C'\r\n" + vCond + " order by c.idcustomer";
+
+} else {
+
+if(dlg.NotSendEmpty) vCond2 = "tmp_files f, "; else vCond2 = "outer tmp_files f, ";
+
+SQLCmd = "select distinct \r\n" +
+"ca.idcustomer as idadmin,\r\n" +
+"NVL(f.filename,'') as filename, \r\n" +
+"NVL(eml.email,'') as email \r\n" +
+"from cardcontracts cc, customer c, \r\n" + vCond2 +
+"customer_link lw, customer cw,\r\n" +
+"customer_link la, customer ca, addparamsdata apd, addparams ap,\r\n" +
+"outer contact eml\r\n" +
+"where cc.idcustomer = c.idcustomer \r\n" +
+"and lw.linktype = '2134' --replace on 1207 \r\n" +
+"and lw.idcustslave = c.idcustomer \r\n" +
+"and lw.idcustmaster = cw.idcustomer \r\n" +
+"and la.linktype = '1208' --replace on 1201 \r\n" +
+"and la.idcustslave = cw.idcustomer \r\n" +
+"and la.idcustmaster = ca.idcustomer \r\n" +
+"and ca.idcustomer = apd.object_id  \r\n" +
+"and ap.paramcode = 'cardprojecttype' \r\n" +
+"and apd.idparam = ap.idparam \r\n" +
+"and apd.object_type = 'C' \r\n" +
+"and eml.idcustomer = ca.idcustomer \r\n" +
+"and eml.main = 'Y' \r\n" +
+"and CAST(c.intcode AS VARCHAR(255)) = f.idfile \r\n" + vCond + " order by ca.idcustomer";
+
+};
+
+if (DEBUG) HostApp.CreateGridForm(SQLCmd, true).ShowModal();
+
+vCond = null;
+
+vPrevIdAdm = 'x';
+
+SQLCursor = db.CreateCursor(SQLCmd);
+
+while (!SQLCursor.EOF)
+{
+
+vEmail = SQLCursor.FieldByName('email').Value;
+vIdAdm = SQLCursor.FieldByName('idadmin').Value;
+vFile = SQLCursor.FieldByName('filename').Value;
+vFileName = dlg.PathOut + '\\' + vFile;
+
+if (vIdAdm !== vPrevIdAdm){
+if (vPrevIdAdm !== 'x') {
+MyItem.Save(); //Сохраним предыдущий email, если он не первый
+};
+
+MyItem = MailApp.CreateItem(0);
+MyItem.Subject = MsgTitle;
+MyItem.Importance = 2;
+MyItem.FlagStatus = 2;
+MyItem.Body = MsgText;
+MyItem.To = vEmail;
+MyItem.CC = dlg.MailCC;
+MyItem.SentOnBehalfOfName = dlg.MailFrom;
+if((vFileName !== (dlg.PathOut + '\\')) &amp;&amp; (vFile !== ''))MyItem.Attachments.Add(vFileName, 1);
+
+vPrevIdAdm = vIdAdm;
+
+} else {
+
+if((vFileName !== (dlg.PathOut + '\\')) &amp;&amp; (vFile !== ''))MyItem.Attachments.Add(vFileName, 1);
+
+vPrevIdAdm = vIdAdm;
+
+}
+
+SQLCursor.Next();
+
+};
+
+if(vPrevIdAdm !== 'x') MyItem.Save();
+
+MsgBox('Работа отчета завершена!');
+
+SQLCursor.Close();
+
+/*
+Для анализа попробовать этот запрос вместо первого
+
+select distinct 
+lpad(apd.data,2) as prtype,  
+ca.idcustomer as idcust_adm,
+cw.idcustomer as idcust_mngr, 
+c.idcustomer,
+c.intcode,
+cc.acc,
+f.filename
+from cardcontracts cc, customer c, tmp_files f, 
+outer (customer_link lw, customer cw,
+outer (customer_link la, customer ca, addparamsdata apd, addparams ap))
+where cc.idcustomer = c.idcustomer 
+and lw.linktype = '2134' --replace on 1207
+and lw.idcustslave = c.idcustomer
+and lw.idcustmaster = cw.idcustomer
+and la.linktype = '1208' --replace on 1201
+and la.idcustslave = cw.idcustomer
+and la.idcustmaster = ca.idcustomer
+and ca.idcustomer = apd.object_id 
+and ap.paramcode = 'cardprojecttype'
+and apd.idparam = ap.idparam
+and apd.object_type = 'C'
+and CAST(c.intcode AS VARCHAR(255)) = f.fileid
+and apd.data = 1
+order by idcust_adm
+*/
+};
+
+};
+
+
+function ConvertDateToSqlString(dt)
+{
+ return "MDY (" + (dt.getMonth()+1)  + ", " + dt.getDate()  + ", " + dt.getFullYear()  + ")";
+};
+
+function log(color, action, message) {
+RunSQL("insert into tmp_log values('"+color+"','"+action+"','"+message+"')", true);
+};
+
+function RunSQL(cSQLCmd, isBreak)
+{
+  var retvar = true;
+  var lIsBreak = false;
+
+  if (typeof(isBreak) != "boolean" || isBreak == null)
+  {
+  } else {
+    lIsBreak = isBreak;
+  }
+
+  cError = HostApp.GeneralDataBase.ExecSQL(cSQLCmd);
+  if ( cError.length &gt; 0 )
+  {
+    retvar = false;
+    if (lIsBreak)
+    {
+     HostApp.RaiseException(cError + "\r\n" + cSQLCmd);
+    } else {
+     HostApp.MsgBox (cError + "\r\n" + cSQLCmd);
+    }
+  }
+  return retvar;
+};
+
+function test(dlg, fso) {
+
+
+MsgFile = fso.OpenTextFile(dlg.Path, 1);
+FileRead = MsgFile.ReadAll();
+Msg = new String(FileRead);
+MsgTitle = Msg.replace(/(\n.+)+/,'');
+MsgText = Msg.replace(/.+\n/,'');
+
+MsgFile.Close();
+MsgBox(MsgTitle);
+MsgBox(MsgText);
+
+
+/*
+Folder = fso.GetFolder(dlg.PathOut);
+var FileCollection = Folder.Files;
+MsgBox(FileCollection.Count);
+
+// Traverse through the FileCollection using the FOR loop
+	for(var objEnum = new Enumerator(FileCollection); !objEnum.atEnd(); objEnum.moveNext()) {
+	   strFileName = objEnum.item();
+	   var msg2 = new String(strFileName);
+	   MsgBox(msg2.replace(/^.+(\\)/,''));
+	}
+
+	// Destroy and de-reference enumerator object
+	delete objEnum;
+	objEnum = null;
+
+	// De-reference FileCollection and Folder object
+	FileCollection = null;
+	Folder = null;
+
+	// Destroy and de-reference FileSystemObject
+	delete FSO;
+	FSO = null;
+*/
+/*
+MsgFile = fso.OpenTextFile(dlg.Path, 1);
+var ln = new Array();
+var i = 1;
+while (!MsgFile.EOF)
+{
+   ln[i] = MsgFile.ReadLine();
+   MsgFile.Next();
+};
+MsgFile.Close();
+MsgBox(ln[1]);
+MsgBox(ln[2]);
+MsgBox(ln[3]);
+*/
+
+};
+</body>
+    <groups/>
+  </report>
+</root>
